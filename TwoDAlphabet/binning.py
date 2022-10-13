@@ -456,13 +456,13 @@ def copy_hist_with_new_bins(copyName,XorY,inHist,new_bins):
         for rebin in range(1,rebin_nbins+1):
             new_bin_content = 0
             new_bin_errorsq = 0
-            new_bin_min = rebin_axis.GetBinLowEdge(rebin)
-            new_bin_max = rebin_axis.GetBinUpEdge(rebin)
+            new_bin_min = round(rebin_axis.GetBinLowEdge(rebin), 2)
+            new_bin_max = round(rebin_axis.GetBinUpEdge(rebin), 2)
 
             # print '\t New bin x: ' + str(newBinX) + ', ' + str(newBinXlow) + ', ' + str(newBinXhigh)
             for old_bin in range(1,old_axis.GetNbins()+1):
-                old_bin_min = old_axis.GetBinLowEdge(old_bin)
-                old_bin_max = old_axis.GetBinUpEdge(old_bin)
+                old_bin_min = round(old_axis.GetBinLowEdge(old_bin), 2)
+                old_bin_max = round(old_axis.GetBinUpEdge(old_bin), 2)
                 if old_bin_min >= new_bin_max:
                     break
                 elif old_bin_min >= new_bin_min and old_bin_min < new_bin_max:
@@ -470,9 +470,11 @@ def copy_hist_with_new_bins(copyName,XorY,inHist,new_bins):
                         if axis_to_rebin == "X":
                             new_bin_content += inHist.GetBinContent(old_bin,static_bin)
                             new_bin_errorsq += inHist.GetBinError(old_bin,static_bin)**2
+                            break
                         else:
                             new_bin_content += inHist.GetBinContent(static_bin,old_bin)
                             new_bin_errorsq += inHist.GetBinError(static_bin,old_bin)**2
+                            break
                     elif old_bin_max > new_bin_max:
                         raise ValueError(
                             '''The requested %s rebinning does not align bin edges with the input bin edge.
