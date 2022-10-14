@@ -304,6 +304,9 @@ def concat_bin_lists(binLists):
         if b[0] != bins_list[-1]:
             raise ValueError('Bins in binLists are not continuous along axis.')
         bins_list.extend(b[1:])
+	#print('bin: {}'.format(b[1:]))
+	#print('bin rounded: {}'.format(round(b[1:],2)))
+	#bins_list.extend(round(b[1:],2))
     return bins_list
 
 def get_bins_from_hist(XYZ,h):
@@ -319,7 +322,8 @@ def get_bins_from_hist(XYZ,h):
     '''
     nbins = getattr(h,'GetNbins'+XYZ)()
     axis = getattr(h,'Get%saxis'%XYZ)()
-    bins = [axis.GetBinLowEdge(i+1) for i in range(nbins)]+[axis.GetBinUpEdge(nbins)]
+    # bins = [axis.GetBinLowEdge(i+1) for i in range(nbins)]+[axis.GetBinUpEdge(nbins)]
+    bins = [round(axis.GetBinLowEdge(i+1),2) for i in range(nbins)]+[round(axis.GetBinUpEdge(nbins),2)]
     return bins
 
 def histlist_to_binlist(XYZ,histList):
