@@ -808,6 +808,10 @@ def _make_pull_plot(data, bkg):
     for ibin in range(1,pull.GetNbinsX()+1):
         d = data.GetBinContent(ibin)
         b = bkg.GetBinContent(ibin)
+	#DEBUG
+	print('b: {}'.format(b))
+	print('d: {}'.format(d))
+	print('type(d) = {}'.format(type(d)))
         if d >= b:
             derr = data.GetBinErrorLow(ibin)
             berr = bkg.GetBinErrorUp(ibin)
@@ -818,7 +822,13 @@ def _make_pull_plot(data, bkg):
         if d == 0:
             derr = 1
 
+	# DEBUG
+	if math.isnan(d):
+	    derr = 1	
+	    berr = 1
+
         sigma = math.sqrt(derr*derr + berr*berr)
+
         if sigma != 0:
             pull.SetBinContent(ibin, (pull.GetBinContent(ibin))/sigma)
         else:
