@@ -209,13 +209,16 @@ def parse_binning_info(binDict):
             new_bins = {c:parse_axis_info(axis[c]) for c in ['LOW','SIG','HIGH']}
         else:
             new_bins = parse_axis_info(axis)
+
+	# deal with rounding issues
+	new_bins_rounded = [round(i,2) for i in new_bins]
             
         if v == 'X':
             if isinstance(new_bins,list):
-                newXbins = binlist_to_bindict(new_bins,axis['SIGSTART'],axis['SIGEND'])
+                newXbins = binlist_to_bindict(new_bins_rounded,axis['SIGSTART'],axis['SIGEND'])
             else:
-                newXbins = new_bins
-        elif v == 'Y': newYbins = new_bins
+                newXbins = new_bins_rounded
+        elif v == 'Y': newYbins = new_bins_rounded
 
     return newXbins,newYbins
     
