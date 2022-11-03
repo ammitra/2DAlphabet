@@ -206,15 +206,13 @@ def parse_binning_info(binDict):
     for v in ['X','Y']:
         axis = binDict[v]
         if (v == 'X') and ('LOW' in axis.keys()) and ('SIG' in axis.keys()) and ('HIGH' in axis.keys()):
-            new_bins = {c:parse_axis_info(axis[c]) for c in ['LOW','SIG','HIGH']}
+            new_bins_rounded = {c:parse_axis_info(axis[c]) for c in ['LOW','SIG','HIGH']}
         else:
             new_bins = parse_axis_info(axis)
-
-	# deal with rounding issues
-	new_bins_rounded = [round(i,2) for i in new_bins]
+            new_bins_rounded = [round(i,2) for i in new_bins]
             
         if v == 'X':
-            if isinstance(new_bins,list):
+            if isinstance(new_bins_rounded,list):
                 newXbins = binlist_to_bindict(new_bins_rounded,axis['SIGSTART'],axis['SIGEND'])
             else:
                 newXbins = new_bins_rounded
@@ -307,9 +305,9 @@ def concat_bin_lists(binLists):
         if b[0] != bins_list[-1]:
             raise ValueError('Bins in binLists are not continuous along axis.')
         bins_list.extend(b[1:])
-	#print('bin: {}'.format(b[1:]))
-	#print('bin rounded: {}'.format(round(b[1:],2)))
-	#bins_list.extend(round(b[1:],2))
+    #print('bin: {}'.format(b[1:]))
+    #print('bin rounded: {}'.format(round(b[1:],2)))
+    #bins_list.extend(round(b[1:],2))
     return bins_list
 
 def get_bins_from_hist(XYZ,h):
