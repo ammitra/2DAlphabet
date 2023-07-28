@@ -1009,10 +1009,10 @@ def plot_gof(tag, subtag, seed=123456, condor=False):
 
         # Write out for reference
         with open('gof_results.txt','w') as out:
-            out.write('Test statistic in data = '+str(gof_data))
-            out.write('Mean from toys = '+str(gaus.GetParameter(1)))
-            out.write('Width from toys = '+str(gaus.GetParameter(2)))
-            out.write('p-value = '+str(pvalue))
+            out.write('Test statistic in data = {}\n'.format(str(gof_data)))
+            out.write('Mean from toys = {}\n'.format(str(gaus.GetParameter(1))))
+            out.write('Width from toys = {}\n'.format(str(gaus.GetParameter(2))))
+            out.write('p-value = {}\n'.format(str(pvalue)))
 
         # Extend the axis if needed
         if htoy_gof.GetXaxis().GetXmax() < gof_data:
