@@ -369,7 +369,6 @@ def stitch_hists_in_x(name,binning,histList,blinded=[]):
         if i in blinded:
             bin_jump += histList[i].GetNbinsX()
             continue
-        
         for ybin in range(1,h.GetNbinsY()+1):
             for xbin in range(1,h.GetNbinsX()+1):
                 stitched_xindex = xbin + bin_jump

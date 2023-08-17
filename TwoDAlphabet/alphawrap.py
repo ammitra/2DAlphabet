@@ -1,7 +1,7 @@
 from collections import OrderedDict
 from TwoDAlphabet.helpers import roofit_form_to_TF1
 from ROOT import RooRealVar, RooFormulaVar, RooArgList, RooParametricHist2D, RooConstVar, TFormula, RooAddition
-from TwoDAlphabet.binning import copy_hist_with_new_bins
+from TwoDAlphabet.binning import copy_hist_with_new_bins, stitch_hists_in_x
 import itertools
 # import numpy as np
 # from numpy.lib.function_base import piecewise
@@ -87,6 +87,29 @@ class Generic2D(object):
 
         return out
 
+    def PlotDistribution(self, blinded=[]):
+	'''Returns a TH2 of `self` in `LOW`, `SIG`, and `HIGH` regions, stitched together.
+
+	Args:
+	    blinded (list(int), optional): List of indexes of histList which should be dropped/blinded. Defaults to []. Indices include: [0] = LOW, [1] = SIG, [2] = HIGH
+
+	Returns:
+	    out (TH2): 2D histogram representing `self` in the three subspaces
+	    histList (list(TH2)): list of 2D histograms of the Generic2D's distribution in the LOW/SIG/HIGH regions
+	'''
+	# Create ordered list of (filled!) LOW/SIG/HIGH histograms from `self`
+	histList = []
+	for cat in _subspace:
+	    out_hist = self.binning.CreateHist(self.name+'_'+cat+'_temp',cat)
+	    numX, numY = out_hist.GetNbinsX(), out_hist.GetNbinsY()
+	    for caty in range(1, numY+1):
+		for catx in range(1, numX+1):
+		    out_hist.SetBinContent(catx, caty, self.getBinVal(catx, caty,c=cat))
+	    histList.append(out_hist)
+	# Output hist has to be named something different to avoid ROOT deleting old hists
+	out = stitch_hists_in_x(self.name+'_dist',self.binning,histList,blinded=blinded)
+	return out, histList
+
     def Add(self,name,other,factor='1'):
         '''Add `self` with `other`. Optionally change the
         factor in front of `other` (defaults to 1). This option is
@@ -160,18 +183,22 @@ class Generic2D(object):
             out_add[cat] = RooAddition(obj_name+'_norm',obj_name+'_norm',self.binArgLists[cat])
         return out_rph, out_add
 
-    def getBinVal(self,xbin,ybin):
+    def getBinVal(self,xbin,ybin,c=''):
         '''Get bin value (for the current parameter values) in
-        bin (xbin, ybin).
+        bin (xbin, ybin). Bins treated as global unless a category
+	is specified with the `c` option.
 
         Args:
             xbin (int): Indexed at 1 for ROOT compatibility.
             ybin (int): Indexed at 1 for ROOT compatibility.
+            c (str, optional): One of "LOW", "SIG", or "HIGH" which will
+                cause xbin and ybin to be interpreted as indexes for the given subspace.
+                Defaults to '' in which case xbin and ybin are treated as global.
 
         Returns:
             float: Current bin value.
         '''
-        return self.getBinVar(xbin,ybin).getValV()
+        return self.getBinVar(xbin,ybin,c).getValV()
 
     def getBinVar(self,xbin,ybin,c=''):
         '''Get the bin variable associated with (xbin,ybin).
