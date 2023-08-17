@@ -3,7 +3,7 @@ from collections import OrderedDict
 from TwoDAlphabet.config import Config, OrganizedHists
 from TwoDAlphabet.binning import Binning
 from TwoDAlphabet.helpers import CondorRunner, execute_cmd, parse_arg_dict, unpack_to_line, make_RDH, cd, _combineTool_impacts_fix
-from TwoDAlphabet.alphawrap import Generic2D
+from TwoDAlphabet.alphawrap import Generic2D, ParametricFunction
 from TwoDAlphabet import plot
 import ROOT
 
@@ -424,6 +424,87 @@ class TwoDAlphabet:
         f.Close()
 
         return masked_regions
+
+    def GetTransferFunctionShapes(self, binName='default', rpfOpts={}):
+	'''Get the histograms for the transfer functions used in the fit. The histograms will have the same binning as the input histograms to 2DAlphabet, not the rebinned form.
+	NOTE: the ML fit must have been run first in order to access the `rpf_params*.txt` file containing the postfit parameter values.
+	
+        Args:
+	    binName (str): binning label in the `BINNING` section of the JSON
+	    rpfOpts dict(str:dict): map containing the name of the transfer function(s) (e.g. '2x2' and the associated form (e.g. '@0+@1*x') and constraints
+
+        Returns:
+	    outHists (list): list containing histograms of the transfer function(s) constructed using the b-only and s+b postfit values, in the original input binning
+	'''
+	# Determine which fit directories (subtags, in 2DAlphabet) exist and have a valid fit result
+	subDirs = next(os.walk(self.tag))[1]
+	subtags = []
+	for subDir in subDirs:
+	    if os.path.isfile('{}/{}/postfitshapes_s.root'.format(self.tag,subDir)):
+		subtags.append(subDir)
+
+	# Get the input histogram binning (X and Y min/max, nbins)
+	template_file = ROOT.TFile.Open(self.df.iloc[0].source_filename)
+	template = template_file.Get(self.df.iloc[0].source_histname)
+	template.SetDirectory(0)
+	numX, numY = template.GetNbinsX(), template.GetNbinsY()
+	xMin, yMin = template.GetXaxis().GetXmin(), template.GetYaxis().GetXmin()
+	xMax, yMax = template.GetXaxis().GetXmax(), template.GetYaxis().GetXmax()
+
+	# Now get the original config to modify it 
+	config = Config(jsonPath='{}/runConfig.json'.format(self.tag))
+	if binName not in config.config['BINNING']:
+	    raise RuntimeError('Binning label "{}" not in list of labels in JSON: {}'.format(binName,config.config['BINNING'].keys()))
+	binning = config.config['BINNING'][binName].copy()  # {X:info, Y:info}
+	for axis in ['X','Y']:
+	    # Remove custom bin widths, if used
+	    if 'BINS' in binning[axis]:
+		binning[axis].pop('BINS')
+	    # Add in the new info
+	    binning[axis]["NBINS"] = numX if axis == 'X' else numY
+	    binning[axis]["MIN"] = xMin if axis == 'X' else xMin
+	    binning[axis]["MAX"] = xMax if axis == 'X' else xMax
+
+        rpfFile = ROOT.TFile.Open('{}/RPF_data.root'.format(self.tag),'RECREATE')
+        rpfFile.cd()
+
+	outHists = []
+
+        # Now, prepare to create the ParametricFunction object(s)
+	newBinning = Binning(binName, binning, template)
+	for rpf in rpfOpts.keys():
+	    for fitType in ['b','s']:
+		subtag = [tag for tag in subtags if rpf in tag]
+		if len(subtag) != 1:
+		    raise ValueError('{} valid subtags found: {}\nNot supported.'.format(len(subtag),subtag))
+		rpf_params = self.GetParamsOnMatch(regex='_par', subtag=subtag[0], b_or_s=fitType)
+		rpf_func = ParametricFunction(
+		    rpf+fitType, newBinning, rpfOpts[rpf]['form'],
+		    constraints=rpfOpts[rpf]['constraints']
+		)
+
+	        # Check to ensure that the number of params matches what was given for the transfer function form
+		if rpfOpts[rpf]['form'].count('@') != len(rpf_params):
+		    raise RuntimeError('Transfer function {} : {} has {} parameters, detected {} parameters on regex match:\n{}'.format(rpf,rpfOpts[rpf]['form'],rpfOpts[rpf]['form'].count('@'),len(rpf_params),rpf_params.keys()))
+		# Set the parameter values in the rpf_func ParametricFunction object
+		count = 0
+		for param, valError in rpf_params.items():
+		    nParam = param.split('_par')[-1] # grab the parameter number
+		    rpf_func.setFuncParam('{}{}_par{}'.format(rpf,fitType,nParam), valError['val'])
+
+		# Create and fill the RPF shape histogram
+		out_hist = rpf_func.binning.CreateHist(fitType+'_'+rpf,cat='')
+		for ix in range(1, numX):
+		    for iy in range(1, numY):
+			out_hist.SetBinContent(ix, iy, rpf_func.getBinVal(ix, iy))
+
+		rpfFile.cd()
+		out_hist.SetDirectory(0)
+		out_hist.Write()
+		outHists.append(out_hist)
+
+	rpfFile.Close()
+	return outHists
 
     def GoodnessOfFit(self, subtag, ntoys, card_or_w='card.txt', freezeSignal=False, seed=123456,
                             verbosity=0, extra='', condor=False, eosRootfiles=None, njobs=0, makeEnv=False):

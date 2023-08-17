@@ -463,7 +463,7 @@ class BinnedDistribution(Generic2D):
             for ybin in range(1,cat_hist_up.GetNbinsY()+1):
                 for xbin in range(1,cat_hist_up.GetNbinsX()+1):
                     bin_name = '%s_%s_bin_%s-%s'%(cat_name,nuis_name,xbin,ybin)
-                    self.binVar[bin_name] = singleBinInterp( # change to singleBinInterpQuad to change interpolation method
+                    self.binVars[bin_name] = singleBinInterp( # change to singleBinInterpQuad to change interpolation method
                                                 bin_name, self.getBinVar(xbin,ybin,cat), nuisance_par,
                                                 cat_hist_up.GetBinContent(xbin,ybin),
                                                 cat_hist_down.GetBinContent(xbin,ybin),
