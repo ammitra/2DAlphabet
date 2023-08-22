@@ -506,6 +506,13 @@ class TwoDAlphabet:
 	rpfFile.Close()
 	return outHists
 
+    def MakePseudoData(self, subtag, regions=[], rpfs=[], b_or_s='b'):
+	'''TO DO:
+	    - write code in TwoDAlphabet/utils/make_pseudo.py
+	    - import it as module, 
+	    - implement it here
+	'''
+
     def GoodnessOfFit(self, subtag, ntoys, card_or_w='card.txt', freezeSignal=False, seed=123456,
                             verbosity=0, extra='', condor=False, eosRootfiles=None, njobs=0, makeEnv=False):
         # NOTE: There's no way to blind data here - need to evaluate it to get the p-value
