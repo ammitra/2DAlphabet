@@ -4,6 +4,7 @@ from TwoDAlphabet.config import Config, OrganizedHists
 from TwoDAlphabet.binning import Binning
 from TwoDAlphabet.helpers import CondorRunner, execute_cmd, parse_arg_dict, unpack_to_line, make_RDH, cd, _combineTool_impacts_fix
 from TwoDAlphabet.alphawrap import Generic2D, ParametricFunction
+from TwoDAlphabet.utils.make_pseudo import PseudoData
 from TwoDAlphabet import plot
 import ROOT
 
@@ -434,7 +435,7 @@ class TwoDAlphabet:
 	    rpfOpts dict(str:dict): map containing the name of the transfer function(s) (e.g. '2x2' and the associated form (e.g. '@0+@1*x') and constraints
 
         Returns:
-	    outHists (list): list containing histograms of the transfer function(s) constructed using the b-only and s+b postfit values, in the original input binning
+	    outHists (dict): key-value dict containing histograms of the transfer function(s) constructed using the b-only and s+b postfit values and their names, in the original input binning
 	'''
 	# Determine which fit directories (subtags, in 2DAlphabet) exist and have a valid fit result
 	subDirs = next(os.walk(self.tag))[1]
@@ -468,7 +469,7 @@ class TwoDAlphabet:
         rpfFile = ROOT.TFile.Open('{}/RPF_data.root'.format(self.tag),'RECREATE')
         rpfFile.cd()
 
-	outHists = []
+	outHists = {}
 
         # Now, prepare to create the ParametricFunction object(s)
 	newBinning = Binning(binName, binning, template)
@@ -501,17 +502,66 @@ class TwoDAlphabet:
 		rpfFile.cd()
 		out_hist.SetDirectory(0)
 		out_hist.Write()
-		outHists.append(out_hist)
+		outHists[fitType+'_'+rpf] = out_hist
 
 	rpfFile.Close()
 	return outHists
 
-    def MakePseudoData(self, subtag, regions=[], rpfs=[], b_or_s='b'):
-	'''TO DO:
-	    - write code in TwoDAlphabet/utils/make_pseudo.py
-	    - import it as module, 
-	    - implement it here
+    def MakePseudoData(self, regions=[], rpfs=[], findreplace={}, blindFail=False):
+	'''Produce a pseudo-data toy in all of the regions used in a fit. Useful for 
+	producing blinded signal regions.
+
+	Args:
+	    regions (list(str)): List of strings representing the regions that will be used in the fit,
+		in the order in which they will be fit. This includes the fail region.
+	    rpfs (list(TH2)): List of transfer function TH2s used to produce the transfer function-based
+		background estimate, in the order in which they will be applied. These can be obtained 
+		from a postfit result using the GetTransferFunctionShapes() method.
+	    findreplace (dict): Non-nested dictionary with key-value pairs to find-replace in the TwoDAlphabet
+                internal ledger, if using results from a fit that did not contain the regions for which you 
+		are generating toys.
+			Ex: {'CR_fail':'SR_fail', 'CR_pass','SR_pass'}
+	    blindFail (bool): Whether or not to blind (by creating pseudo data) for the given "fail" region. 
+		This might be desired if the "fail" region is not completely signal-free for some reason but
+		toys still need to be generated.
 	'''
+	# Instantiate object to automate the toy data generation
+	pseudo = PseudoData(self, regions, rpfs, findreplace)
+	# Get the data-minus-bkg template in the fail region
+	fail_template, fail_data = pseudo.GetFailTemplate()
+	# Get the total MC bkg templates in the non-fail regions
+	bkg_templates = pseudo.GetBkgTemplates()
+	# For each non-fail region, generate the Asimov dataset (totalMC + estimates from transfer functions)
+	asimov_data, transfer_estimates = pseudo.GetAsimov(fail_template, bkg_templates)
+	# Create background PDFs for each non-fail region, along with the number of events used to normalize PDFs
+	PDFs = pseudo.CreatePDF(asimov_data)
+	# Create cumulative of each PDF
+	CDFs = pseudo.CreateCDF(PDFs)
+        # If the "fail" region needs to be blinded, create pseudo data for it by treating the real data there as Asimov
+        if blindFail:
+            fail_copy = fail_data.Clone()
+            inFail = {regions[0]:fail_copy}
+            failPDF = pseudo.CreatePDF(inFail)
+            failCDF = pseudo.CreateCDF(failPDF)
+	    # Add it to the appropriate dicts so that toy data is generated for the "fail" region 
+	    PDFs.update(failPDF)
+	    CDFs.update(failCDF)
+
+	outFile = ROOT.TFile.Open('PseudoDataToy.root','RECREATE')
+	outFile.cd()
+	# If we aren't blinding the "fail" region, we can directly write the real data in "fail" to the output file.
+	if not blindFail: fail_data.Write()
+	# Now loop over the non-fail regions and obtain the toy generated for each
+	for region, CDF in CDFs.items():
+	    outHistName = pseudo.outHistNames[region] # automatically picks up fail histo name, if needed
+	    PDF = PDFs[region][0]
+	    nEvents = PDFs[region][1]
+	    CDF.Write()
+	    PDF.Write()
+	    toy = pseudo.GeneratePseudoData(PDF, nEvents, CDF, outHistName)
+	    toy.SetDirectory(0)
+	    toy.Write()
+	outFile.Close()
 
     def GoodnessOfFit(self, subtag, ntoys, card_or_w='card.txt', freezeSignal=False, seed=123456,
                             verbosity=0, extra='', condor=False, eosRootfiles=None, njobs=0, makeEnv=False):
