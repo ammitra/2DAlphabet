@@ -206,16 +206,17 @@ def parse_binning_info(binDict):
     for v in ['X','Y']:
         axis = binDict[v]
         if (v == 'X') and ('LOW' in axis.keys()) and ('SIG' in axis.keys()) and ('HIGH' in axis.keys()):
-            new_bins = {c:parse_axis_info(axis[c]) for c in ['LOW','SIG','HIGH']}
+            new_bins_rounded = {c:parse_axis_info(axis[c]) for c in ['LOW','SIG','HIGH']}
         else:
             new_bins = parse_axis_info(axis)
+            new_bins_rounded = [round(i,2) for i in new_bins]
             
         if v == 'X':
-            if isinstance(new_bins,list):
-                newXbins = binlist_to_bindict(new_bins,axis['SIGSTART'],axis['SIGEND'])
+            if isinstance(new_bins_rounded,list):
+                newXbins = binlist_to_bindict(new_bins_rounded,axis['SIGSTART'],axis['SIGEND'])
             else:
-                newXbins = new_bins
-        elif v == 'Y': newYbins = new_bins
+                newXbins = new_bins_rounded
+        elif v == 'Y': newYbins = new_bins_rounded
 
     return newXbins,newYbins
     
@@ -304,6 +305,9 @@ def concat_bin_lists(binLists):
         if b[0] != bins_list[-1]:
             raise ValueError('Bins in binLists are not continuous along axis.')
         bins_list.extend(b[1:])
+    #print('bin: {}'.format(b[1:]))
+    #print('bin rounded: {}'.format(round(b[1:],2)))
+    #bins_list.extend(round(b[1:],2))
     return bins_list
 
 def get_bins_from_hist(XYZ,h):
@@ -319,7 +323,8 @@ def get_bins_from_hist(XYZ,h):
     '''
     nbins = getattr(h,'GetNbins'+XYZ)()
     axis = getattr(h,'Get%saxis'%XYZ)()
-    bins = [axis.GetBinLowEdge(i+1) for i in range(nbins)]+[axis.GetBinUpEdge(nbins)]
+    # bins = [axis.GetBinLowEdge(i+1) for i in range(nbins)]+[axis.GetBinUpEdge(nbins)]
+    bins = [round(axis.GetBinLowEdge(i+1),2) for i in range(nbins)]+[round(axis.GetBinUpEdge(nbins),2)]
     return bins
 
 def histlist_to_binlist(XYZ,histList):
@@ -364,7 +369,6 @@ def stitch_hists_in_x(name,binning,histList,blinded=[]):
         if i in blinded:
             bin_jump += histList[i].GetNbinsX()
             continue
-        
         for ybin in range(1,h.GetNbinsY()+1):
             for xbin in range(1,h.GetNbinsX()+1):
                 stitched_xindex = xbin + bin_jump
@@ -456,13 +460,13 @@ def copy_hist_with_new_bins(copyName,XorY,inHist,new_bins):
         for rebin in range(1,rebin_nbins+1):
             new_bin_content = 0
             new_bin_errorsq = 0
-            new_bin_min = rebin_axis.GetBinLowEdge(rebin)
-            new_bin_max = rebin_axis.GetBinUpEdge(rebin)
+            new_bin_min = round(rebin_axis.GetBinLowEdge(rebin), 2)
+            new_bin_max = round(rebin_axis.GetBinUpEdge(rebin), 2)
 
             # print '\t New bin x: ' + str(newBinX) + ', ' + str(newBinXlow) + ', ' + str(newBinXhigh)
             for old_bin in range(1,old_axis.GetNbins()+1):
-                old_bin_min = old_axis.GetBinLowEdge(old_bin)
-                old_bin_max = old_axis.GetBinUpEdge(old_bin)
+                old_bin_min = round(old_axis.GetBinLowEdge(old_bin), 2)
+                old_bin_max = round(old_axis.GetBinUpEdge(old_bin), 2)
                 if old_bin_min >= new_bin_max:
                     break
                 elif old_bin_min >= new_bin_min and old_bin_min < new_bin_max:
@@ -470,9 +474,11 @@ def copy_hist_with_new_bins(copyName,XorY,inHist,new_bins):
                         if axis_to_rebin == "X":
                             new_bin_content += inHist.GetBinContent(old_bin,static_bin)
                             new_bin_errorsq += inHist.GetBinError(old_bin,static_bin)**2
+                            break
                         else:
                             new_bin_content += inHist.GetBinContent(static_bin,old_bin)
                             new_bin_errorsq += inHist.GetBinError(static_bin,old_bin)**2
+                            break
                     elif old_bin_max > new_bin_max:
                         raise ValueError(
                             '''The requested %s rebinning does not align bin edges with the input bin edge.

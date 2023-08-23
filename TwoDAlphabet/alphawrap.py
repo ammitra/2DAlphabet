@@ -1,7 +1,7 @@
 from collections import OrderedDict
 from TwoDAlphabet.helpers import roofit_form_to_TF1
 from ROOT import RooRealVar, RooFormulaVar, RooArgList, RooParametricHist2D, RooConstVar, TFormula, RooAddition
-from TwoDAlphabet.binning import copy_hist_with_new_bins
+from TwoDAlphabet.binning import copy_hist_with_new_bins, stitch_hists_in_x
 import itertools
 # import numpy as np
 # from numpy.lib.function_base import piecewise
@@ -87,6 +87,29 @@ class Generic2D(object):
 
         return out
 
+    def PlotDistribution(self, blinded=[]):
+	'''Returns a TH2 of `self` in `LOW`, `SIG`, and `HIGH` regions, stitched together.
+
+	Args:
+	    blinded (list(int), optional): List of indexes of histList which should be dropped/blinded. Defaults to []. Indices include: [0] = LOW, [1] = SIG, [2] = HIGH
+
+	Returns:
+	    out (TH2): 2D histogram representing `self` in the three subspaces
+	    histList (list(TH2)): list of 2D histograms of the Generic2D's distribution in the LOW/SIG/HIGH regions
+	'''
+	# Create ordered list of (filled!) LOW/SIG/HIGH histograms from `self`
+	histList = []
+	for cat in _subspace:
+	    out_hist = self.binning.CreateHist(self.name+'_'+cat+'_temp',cat)
+	    numX, numY = out_hist.GetNbinsX(), out_hist.GetNbinsY()
+	    for caty in range(1, numY+1):
+		for catx in range(1, numX+1):
+		    out_hist.SetBinContent(catx, caty, self.getBinVal(catx, caty,c=cat))
+	    histList.append(out_hist)
+	# Output hist has to be named something different to avoid ROOT deleting old hists
+	out = stitch_hists_in_x(self.name+'_dist',self.binning,histList,blinded=blinded)
+	return out, histList
+
     def Add(self,name,other,factor='1'):
         '''Add `self` with `other`. Optionally change the
         factor in front of `other` (defaults to 1). This option is
@@ -160,18 +183,22 @@ class Generic2D(object):
             out_add[cat] = RooAddition(obj_name+'_norm',obj_name+'_norm',self.binArgLists[cat])
         return out_rph, out_add
 
-    def getBinVal(self,xbin,ybin):
+    def getBinVal(self,xbin,ybin,c=''):
         '''Get bin value (for the current parameter values) in
-        bin (xbin, ybin).
+        bin (xbin, ybin). Bins treated as global unless a category
+	is specified with the `c` option.
 
         Args:
             xbin (int): Indexed at 1 for ROOT compatibility.
             ybin (int): Indexed at 1 for ROOT compatibility.
+            c (str, optional): One of "LOW", "SIG", or "HIGH" which will
+                cause xbin and ybin to be interpreted as indexes for the given subspace.
+                Defaults to '' in which case xbin and ybin are treated as global.
 
         Returns:
             float: Current bin value.
         '''
-        return self.getBinVar(xbin,ybin).getValV()
+        return self.getBinVar(xbin,ybin,c).getValV()
 
     def getBinVar(self,xbin,ybin,c=''):
         '''Get the bin variable associated with (xbin,ybin).
@@ -354,6 +381,47 @@ class ParametricFunction(Generic2D):
                 break
         if parfound == False:
             raise RuntimeError('Could not find par%s in set of nuisances:\n\t%s'%(parIdx,[n['name'] for n in self.nuisances]))
+
+#class SemiParametricFunction(Generic2D):
+class SemiParametricFunction(ParametricFunction,Generic2D):
+    def __init__(self,name,inhist,binning,formula,constraints={},forcePositive=True,funcCeiling=10.):
+        '''A hybrid of ParametricFunction and BinnedDistribution classes. 
+        Uses former (RooFormulaVar) if bin count<funcCeiling, later (RooRealVar) if not.
+        Args: 
+            same as in Parametric Function and BinnedDistribution classes, except funcCeiling
+            funcCeiling (float, optional). Bins with content >funcCeiling will use floating bin parametrization
+        instead of a functional form. Enables using functional form only in the tails of the distribution. Defaults to 10
+        '''
+        Generic2D.__init__(self,name,binning,forcePositive)
+        self.formula = formula #This is already done in init
+        self.nuisances = self._createFuncVars(constraints)
+        self.arglist = RooArgList()
+        for n in self.nuisances: self.arglist.add(n['obj'])
+
+        for cat in _subspace:
+            cat_name = name+'_'+cat
+            cat_hist = copy_hist_with_new_bins(cat_name,'X',inhist,self.binning.xbinByCat[cat])
+            for ybin in range(1,cat_hist.GetNbinsY()+1):
+                for xbin in range(1,cat_hist.GetNbinsX()+1):
+                    content = cat_hist.GetBinContent(xbin,ybin)
+                    bin_name = '%s_bin_%s-%s'%(cat_name,xbin,ybin)
+                    if(content<funcCeiling):
+                        xConst,yConst = self.mappedBinCenter(xbin,ybin,cat)
+                        if forcePositive: 
+                            final_formula = "max(1e-9,%s)"%(self._replaceXY(xConst,yConst))
+                        else:             
+                            final_formula = self._replaceXY(xConst,yConst)
+
+                        self.binVars[bin_name] = RooFormulaVar(
+                            bin_name, bin_name,
+                            final_formula,
+                            self.arglist
+                        )
+                    else:
+                        self.binVars[bin_name] = RooRealVar(bin_name, bin_name, content, 1e-6, 1e9)
+                        self.nuisances.append({'name':bin_name, 'constraint':'flatParam', 'obj': self.binVars[bin_name]})
+
+
        
 class BinnedDistribution(Generic2D):
     def __init__(self,name,inhist,binning,constant=False,forcePositive=True):
@@ -378,7 +446,7 @@ class BinnedDistribution(Generic2D):
                     if constant or self._nSurroundingZeros(cat_hist,xbin,ybin) > 7:
                         self.binVars[bin_name] = RooConstVar(bin_name, bin_name, cat_hist.GetBinContent(xbin,ybin))
                     else:
-                        self.binVars[bin_name] = RooRealVar(bin_name, bin_name, max(5,cat_hist.GetBinContent(xbin,ybin)), 1e-6, 1e6)
+                        self.binVars[bin_name] = RooRealVar(bin_name, bin_name, max(5,cat_hist.GetBinContent(xbin,ybin)), 1e-6, 1e9)
                         self.nuisances.append({'name':bin_name, 'constraint':'flatParam', 'obj': self.binVars[bin_name]})
                     self._varStorage.append(self.binVars[bin_name]) # For safety if we add shape templates            
                      
@@ -422,7 +490,7 @@ class BinnedDistribution(Generic2D):
             for ybin in range(1,cat_hist_up.GetNbinsY()+1):
                 for xbin in range(1,cat_hist_up.GetNbinsX()+1):
                     bin_name = '%s_%s_bin_%s-%s'%(cat_name,nuis_name,xbin,ybin)
-                    self.binVar[bin_name] = singleBinInterp( # change to singleBinInterpQuad to change interpolation method
+                    self.binVars[bin_name] = singleBinInterp( # change to singleBinInterpQuad to change interpolation method
                                                 bin_name, self.getBinVar(xbin,ybin,cat), nuisance_par,
                                                 cat_hist_up.GetBinContent(xbin,ybin),
                                                 cat_hist_down.GetBinContent(xbin,ybin),

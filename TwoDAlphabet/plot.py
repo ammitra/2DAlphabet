@@ -787,9 +787,12 @@ def make_systematic_plots(twoD):
         for axis in ['X','Y']:
             nominal = getattr(nominal_full,'Projection'+axis)('%s_%s_%s_%s'%(p,r,'nom','proj'+axis))
             for s in twoD.ledger.GetShapeSystematics(drop_norms=True):
-                up = getattr(twoD.organizedHists.Get(process=p,region=r,systematic=s+'Up'),'Projection'+axis)('%s_%s_%s_%s'%(p,r,s+'Up','proj'+axis))
-                down = getattr(twoD.organizedHists.Get(process=p,region=r,systematic=s+'Down'),'Projection'+axis)('%s_%s_%s_%s'%(p,r,s+'Down','proj'+axis))
-
+                try:
+                    up = getattr(twoD.organizedHists.Get(process=p,region=r,systematic=s+'Up'),'Projection'+axis)('%s_%s_%s_%s'%(p,r,s+'Up','proj'+axis))
+                    down = getattr(twoD.organizedHists.Get(process=p,region=r,systematic=s+'Down'),'Projection'+axis)('%s_%s_%s_%s'%(p,r,s+'Down','proj'+axis))
+                except:
+                    print("Skipping systematic {0} for process {1} (region {2})".format(s,p,r))
+                    continue
                 c.cd()
                 nominal.SetLineColor(ROOT.kBlack)
                 nominal.SetFillColor(ROOT.kYellow-9)
@@ -825,6 +828,10 @@ def _make_pull_plot(data, bkg, preVsPost=False):
     for ibin in range(1,pull.GetNbinsX()+1):
         d = data.GetBinContent(ibin)
         b = bkg.GetBinContent(ibin)
+	#DEBUG
+	print('b: {}'.format(b))
+	print('d: {}'.format(d))
+	print('type(d) = {}'.format(type(d)))
         if d >= b:
             derr = data.GetBinErrorLow(ibin)
             berr = bkg.GetBinErrorUp(ibin)
@@ -835,7 +842,13 @@ def _make_pull_plot(data, bkg, preVsPost=False):
         if d == 0:
             derr = 1
 
+	# DEBUG
+	if math.isnan(d):
+	    derr = 1	
+	    berr = 1
+
         sigma = math.sqrt(derr*derr + berr*berr)
+
         if sigma != 0:
             pull.SetBinContent(ibin, (pull.GetBinContent(ibin))/sigma)
         else:
@@ -1013,10 +1026,10 @@ def plot_gof(tag, subtag, seed=123456, condor=False):
 
         # Write out for reference
         with open('gof_results.txt','w') as out:
-            out.write('Test statistic in data = '+str(gof_data))
-            out.write('Mean from toys = '+str(gaus.GetParameter(1)))
-            out.write('Width from toys = '+str(gaus.GetParameter(2)))
-            out.write('p-value = '+str(pvalue))
+            out.write('Test statistic in data = {}\n'.format(str(gof_data)))
+            out.write('Mean from toys = {}\n'.format(str(gaus.GetParameter(1))))
+            out.write('Width from toys = {}\n'.format(str(gaus.GetParameter(2))))
+            out.write('p-value = {}\n'.format(str(pvalue)))
 
         # Extend the axis if needed
         if htoy_gof.GetXaxis().GetXmax() < gof_data:
