@@ -306,7 +306,7 @@ class TwoDAlphabet:
             MakeCard(subledger, subtag, workspaceDir)
 
 # -------- STAT METHODS ------------------ #
-    def MLfit(self, subtag, cardOrW='card.txt', rMin=-1, rMax=10, setParams={}, verbosity=0, usePreviousFit=False, extra=''):
+    def MLfit(self, subtag, cardOrW='card.txt', rMin=-1, rMax=10, setParams={}, verbosity=0, usePreviousFit=False, defMinStrat=0, extra=''):
         _runDirSetup(self.tag+'/'+subtag)
         with cd(self.tag+'/'+subtag):
             _runMLfit(
@@ -316,12 +316,22 @@ class TwoDAlphabet:
                 rMin=rMin, rMax=rMax,
                 setParams=setParams,
                 usePreviousFit=usePreviousFit,
+		defMinStrat=defMinStrat,
                 extra=extra)
             make_postfit_workspace('')
             # systematic_analyzer_cmd = 'python $CMSSW_BASE/src/HiggsAnalysis/CombinedLimit/test/systematicsAnalyzer.py card.txt --all -f html > systematics_table.html'
             # execute_cmd(systematic_analyzer_cmd)    
 
-    def StdPlots(self, subtag, ledger=None, prefit=False):
+    def StdPlots(self, subtag, ledger=None, prefit=False, regionsToGroup=[]):
+	'''
+	Args:
+	    prefit (bool): If True, plots the prefit distributions instead of postfit. Defaults to False.
+	    regionsToGroup (list(str)): List of list of strings representing the desired regions to group. 
+		For example, if the fit involves 5 regions: CR_fail, CR_pass, SR_fail, SR_loose, SR_pass, 
+		then 2DAlphabet will try to plot all (5 regions) x (3 slices) = 15 plots on the same canvas. 
+		Instead, pass regionsToGroup = [['CR'],['SR']] to have the CR plotted on a 2x3 canvas and the
+		SR plotted on a 3x3 canvas.
+	'''
         run_dir = self.tag+'/'+subtag
         with cd(run_dir):
             if ledger == None:
@@ -334,8 +344,9 @@ class TwoDAlphabet:
 		corrText=False # change this if you want the correlation matrix to write the number values to each grid square (often there are too many parameters and looks ugly/useless)
             )
             plot.gen_post_fit_shapes()
-            plot.gen_projections(ledger, self, 'b', prefit)
-            plot.gen_projections(ledger, self, 's', prefit)
+            plot.gen_projections(ledger, self, 'b', prefit=prefit, regionsToGroup=regionsToGroup)
+            plot.gen_projections(ledger, self, 's', prefit=prefit, regionsToGroup=regionsToGroup)
+
             
     def GetParamsOnMatch(self, regex='', subtag='', b_or_s='b'):
         out = {}
@@ -623,7 +634,7 @@ class TwoDAlphabet:
                 condor.submit()
             
     def SignalInjection(self, subtag, injectAmount, ntoys, blindData=True, card_or_w='card.txt', rMin=-5, rMax=5, 
-                              seed=123456, verbosity=0, setParams={}, extra='', condor=False, eosRootfiles=None, njobs=0, makeEnv=False):
+                              seed=123456, verbosity=0, setParams={}, defMinStrat=0, extra='', condor=False, eosRootfiles=None, njobs=0, makeEnv=False):
         run_dir = self.tag+'/'+subtag
         _runDirSetup(run_dir)
         
@@ -634,7 +645,7 @@ class TwoDAlphabet:
             fit_cmd = [
                 'combine -M FitDiagnostics',
                 '-d '+card_or_w,
-                '--skipBOnlyFit', '--cminDefaultMinimizerStrategy 0',
+                '--skipBOnlyFit', '--cminDefaultMinimizerStrategy {}'.format(defMinStrat),
                 '-t {ntoys}', '--toysFrequentist', '--bypassFrequentistFit' if blindData else '',
                 param_str, '-s {seed}',
                 '--rMin %s'%rMin, '--rMax %s'%rMax,
@@ -700,7 +711,7 @@ class TwoDAlphabet:
                 )
                 condor.submit()
                 
-    def Impacts(self, subtag, rMin=-15, rMax=15, cardOrW='initialFitWorkspace.root --snapshotName initialFit', extra=''):
+    def Impacts(self, subtag, rMin=-15, rMax=15, cardOrW='initialFitWorkspace.root --snapshotName initialFit', defMinStrat=0, extra='', outName=None):
         # param_str = '' if setParams == {} else '--setParameters '+','.join(['%s=%s'%(p,v) for p,v in setParams.items()])
         with cd(self.tag+'/'+subtag):
             subset = LoadLedger('')
@@ -714,7 +725,7 @@ class TwoDAlphabet:
             base_opts = [
                 '-M Impacts', '--rMin %s'%rMin,
                 '--rMax %s'%rMax, '-d %s'%card_or_w,
-                '--cminDefaultMinimizerStrategy 0 -m 0',
+                '--cminDefaultMinimizerStrategy {} -m 0'.format(defMinStrat),
                 impact_nuis_str, extra #param_str,
                 # '-t -1 --bypassFrequentistFit' if blindData else ''
             ]
@@ -732,7 +743,7 @@ class TwoDAlphabet:
 
             # Grab the output
             execute_cmd('combineTool.py %s -o impacts.json'%(' '.join(base_opts)))
-            execute_cmd('plotImpacts.py -i impacts.json -o impacts')
+            execute_cmd('plotImpacts.py -i impacts.json -o {}'.format({'impacts' if not outName else outName}))
 
 class Ledger():
     def __init__(self, df):
@@ -1005,16 +1016,27 @@ def MakeCard(ledger, subtag, workspaceDir):
     card_new.close()
     ledger.Save(subtag)
 
-def _runMLfit(cardOrW, blinding, verbosity, rMin, rMax, setParams, usePreviousFit=False, extra=''):
+def _runMLfit(cardOrW, blinding, verbosity, rMin, rMax, setParams, usePreviousFit=False, defMinStrat=0, extra=''):
+    '''
+    Args:
+	defMinStrat (int): sets the cminDefaultMinimizerStrategy option for the ML fit
+	    0: speed	   (evaluate function less often)
+	    1: balance
+	    2: robustness  (waste function calls to get precise answers)
+	NOTE: Hesse (error/correlation estimation) will be run ONLY if the strategy is 1 or 2
+    '''
+    if defMinStrat not in [0, 1, 2]:
+	raise RuntimeError('Invalid cminDefaultMinimizerStrategy passed ({}) - please ensure that defMinStrat = 0, 1, or 2'.format(defMinStrat))
     if usePreviousFit: param_options = ''
     else:              param_options = '--text2workspace "--channel-masks" '
     params_to_set = ','.join(['mask_%s_SIG=1'%r for r in blinding]+['%s=%s'%(p,v) for p,v in setParams.items()]+['r=1'])
     param_options += '--setParameters '+params_to_set
 
-    fit_cmd = 'combine -M FitDiagnostics {card_or_w} {param_options} --saveWorkspace --cminDefaultMinimizerStrategy 0 --rMin {rmin} --rMax {rmax} -v {verbosity} {extra}'
+    fit_cmd = 'combine -M FitDiagnostics {card_or_w} {param_options} --saveWorkspace --cminDefaultMinimizerStrategy {defMinStrat} --rMin {rmin} --rMax {rmax} -v {verbosity} {extra}'
     fit_cmd = fit_cmd.format(
         card_or_w='initifalFitWorkspace.root --snapshotName initialFit' if usePreviousFit else cardOrW,
         param_options=param_options,
+	defMinStrat=defMinStrat,
         rmin=rMin,
         rmax=rMax,
         verbosity=verbosity,

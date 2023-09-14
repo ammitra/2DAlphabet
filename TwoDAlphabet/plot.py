@@ -229,12 +229,21 @@ class Plotter(object):
         process_order_df = pandas.DataFrame({'process':process_order})
         return process_order_df.merge(df,on='process',how='inner')
 
-    def plot_2D_distributions(self):
+    def plot_2D_distributions(self, regionsToGroup=[]):
         '''Take the saved 2D distributions and plot them together on sub-pads
         based on process and region groupings.
 
         Plots are grouped based on process and then the regions and pre-fit/post-fit
         plots share the same canvas as sub-pads.
+
+	Arguments:
+	----------
+        regionsToGroup : [[str]]
+            List of list of strings representing the desired regions to group. For example, if the
+            fit involves 5 regions: CR_fail, CR_pass, SR_fail, SR_loose, SR_pass then 2DAlphabet
+            will try to plot all (5 regions) x (3 slices) = 15 plots on the same canvas. Instead,
+            pass regionsToGroup = [['CR'],['SR']] to have the CR plotted on a 2x3 canvas and the
+            SR plotted on a 3x3 canvas.
 
         Returns:
             None
@@ -249,17 +258,30 @@ class Plotter(object):
 
             make_can('{d}/{p}_{r}_2D'.format(d=self.dir,p=process,r=region), [out_file_name%('prefit')+'.png', out_file_name%('postfit')+'.png'])
 
-    def plot_projections(self, prefit=False):
+    def plot_projections(self, prefit=False, regionsToGroup=[]):
         '''Plot comparisons of data and the post-fit background model and signal
         using the 1D projections. Canvases are grouped based on projection axis.
         The canvas rows are separate selection regions while the columns 
         are the different slices of the un-plotted axis.
 
-        Args:
-            logyFlag (bool): If True, set the y-axis to be log scale.
+        Arguments: 
+	----------
+	prefit : bool
+	    If True, will plot the prefit distributions instead of postfit. Defaults to False.
+	regionsToGroup : [[str]]
+	    List of list of strings representing the desired regions to group. For example, if the 
+	    fit involves 5 regions: CR_fail, CR_pass, SR_fail, SR_loose, SR_pass then 2DAlphabet 
+	    will try to plot all (5 regions) x (3 slices) = 15 plots on the same canvas. Instead, 
+	    pass regionsToGroup = [['CR'],['SR']] to have the CR plotted on a 2x3 canvas and the 
+	    SR plotted on a 3x3 canvas.
+	    If instead you fitted CR_fail -> SR_loose -> SR_pass, then you would pass the following:
+		[['CR'],['SR'],['CR_fail','SR_loose','SR_pass']]
+	    The order matters if the sub-list contains multiple strings - the regions are plotted in 
+	    order, with first on top and last on bottom of the canvas.
 
         Returns:
-            None
+	--------
+        Nothing
         '''
         pads = pandas.DataFrame()
         for region, group in self.df.groupby('region'):
@@ -285,7 +307,7 @@ class Plotter(object):
 
                         slice_edges = (
                             self.slices['x' if 'y' in proj else 'y'][region]['vals'][islice],
-                            binning.xtitle if 'y' in proj else binning.ytitle,
+                            binning.xtitle.split(' ')[0] if 'y' in proj else binning.ytitle.split(' ')[0],
                             self.slices['x' if 'y' in proj else 'y'][region]['vals'][islice+1],
                             'GeV'
                         )
@@ -297,7 +319,7 @@ class Plotter(object):
                         
                         make_pad_1D(out_pad_name, data=this_data, bkgs=these_bkgs, signals=these_signals,
                                     subtitle=slice_str, totalBkg=this_totalbkg,
-                                    logyFlag=logyFlag, year=self.twoD.options.year,
+                                    logyFlag=logyFlag, year=self.twoD.options.year, preVsPost=False,
                                     extraText='', savePDF=True, savePNG=True, ROOTout=False)
                         pads = pads.append({'pad':out_pad_name+'.png', 'region':region, 'proj':projn, 'logy':logyFlag}, ignore_index=True)
 
@@ -310,11 +332,42 @@ class Plotter(object):
                     these_pads = these_pads.loc[these_pads.logy.eq(True)]
                 
                 these_pads = these_pads.sort_values(by=['region','proj']).pad.to_list()
-                out_can_name = '{d}/{proj}{logy}'.format(d=self.dir, proj=proj,logy=logy)
-                make_can(out_can_name, these_pads)
+
+		if (len(regionsToGroup) > 0):
+		    for i in range(len(regionsToGroup)):
+			region = regionsToGroup[i]
+			if (len(region) > 1):	# e.g. ['ttbarCR_fail', 'SR_loose', 'SR_pass']
+			    new_pads = []
+			    # Ensure that the regions are plotted in order provided
+			    for r in region:
+				for pad in these_pads:
+				    # As an edge case, assume r would be: CR_pass
+				    # pad would be: plots_fit_b/base_figs/postfit_projx2_CR_pass.png
+				    # but also: plots_fit_b/base_figs/postfit_projx2_ttbarCR_pass.png
+				    # so we have to append an underscore to ensure we get the right one 
+				    rNew = '_'+r
+				    if rNew in pad:
+					new_pads.append(pad)
+			    out_can_name = '{d}/{reg}_{proj}{logy}'.format(d=self.dir,proj=proj,logy=logy,reg='_to_'.join(region))
+			    make_can(out_can_name, new_pads)
+			else:	# e.g. ['SR']
+			    new_pads = [pad for pad in these_pads if region[0] in pad]
+			    out_can_name = '{d}/{reg}_{proj}{logy}'.format(d=self.dir,proj=proj,logy=logy,reg=region[0])
+			    make_can(out_can_name, new_pads)
+		else:
+                    out_can_name = '{d}/{proj}{logy}'.format(d=self.dir, proj=proj, logy=logy)
+                    make_can(out_can_name, these_pads)
         
-    def plot_pre_vs_post(self):
+    def plot_pre_vs_post(self, regionsToGroup=[]):
         '''Make comparisons for each background process of pre and post fit projections.
+	Arguments:
+	----------
+        regionsToGroup : [[str]]
+            List of list of strings representing the desired regions to group. For example, if the
+            fit involves 5 regions: CR_fail, CR_pass, SR_fail, SR_loose, SR_pass then 2DAlphabet
+            will try to plot all (5 regions) x (3 slices) = 15 plots on the same canvas. Instead,
+            pass regionsToGroup = [['CR'],['SR']] to have the CR plotted on a 2x3 canvas and the
+            SR plotted on a 3x3 canvas.
         '''
         for proj in ['projx','projy']:
             pads = pandas.DataFrame()
@@ -325,10 +378,12 @@ class Plotter(object):
                     projn = proj+str(islice)
                     post = self.Get('%s_%s_postfit_%s'%(process,region,projn))
                     post.SetLineColor(ROOT.kBlack)
-                    post.SetTitle('          Postfit, '+process)
+                    post.SetTitle('          Postfit,'+process)	# spaces are for legend aesthetics
 
                     pre = self.Get('%s_%s_prefit_%s'%(process,region,projn))
+		    pre.SetLineColor(ROOT.kRed)
                     pre.SetTitle('Prefit, '+process)
+
                     slice_edges = (
                         self.slices['x' if 'y' in proj else 'y'][region]['vals'][islice],
                         binning.xtitle if 'y' in proj else binning.ytitle,
@@ -341,15 +396,39 @@ class Plotter(object):
                     make_pad_1D(
                         out_pad_name, 
                         post, [pre], totalBkg=pre, subtitle=slice_str, savePDF=True, savePNG=True, 
-                        datastyle='histe', year=self.twoD.options.year, extraText=''
+                        datastyle='histe', year=self.twoD.options.year, extraText='',
+			preVsPost=True	# This tells make_pad_1D() that we're not passing in data distributions but rather a non-data postfit dist and to relabel the legend
                     )
                     
                     pads = pads.append({'pad':out_pad_name+'.png','process':process,'region':region,'proj':projn}, ignore_index=True)
 
-        for process, padgroup in pads.groupby('process'):
-            these_pads = padgroup.sort_values(by=['region','proj']).pad.to_list()
-            make_can('{d}/{p}_{proj}'.format(d=self.dir, p=process,proj=proj), these_pads)
-        
+	    for process, padgroup in pads.groupby('process'):
+		these_pads = padgroup.sort_values(by=['region','proj']).pad.to_list()
+                if (len(regionsToGroup) > 0):
+                    for i in range(len(regionsToGroup)):
+			# First, determine whether the given region has the process in question. If not, continue
+			#padgroup_regions = padgroup['region']
+			'''for now, this will work'''
+			if (len(region)==1): continue
+                        region = regionsToGroup[i]
+                        if (len(region) > 1):   # e.g. ['ttbarCR_fail', 'SR_loose', 'SR_pass']
+                            new_pads = []
+                            # Ensure that the regions are plotted in order provided
+                            for r in region:
+                                for pad in these_pads:
+                                    if r in pad:
+                                        new_pads.append(pad)
+			    out_can_name = '{d}/{p}_{r}_{proj}.png'.format(d=self.dir, p=process, r='_to_'.join(region), proj=proj)
+                            make_can(out_can_name, new_pads)
+                        else:   # e.g. ['SR']
+                            new_pads = [pad for pad in these_pads if region[0] in pad]
+			    out_can_name = '{d}/{p}_{r}_{proj}.png'.format(d=self.dir, p=process, r=region[0], proj=proj)
+                            make_can(out_can_name, new_pads)
+                else:
+		    out_can_name = '{d}/{p}_{proj}'.format(d=self.dir, p=process,proj=proj)
+                    make_can(out_can_name, these_pads)
+
+
     def plot_transfer_funcs(self):
         raise NotImplementedError()
         # # Need to sample the space to get the Rp/f with proper errors (1000 samples)
@@ -518,7 +597,7 @@ def make_pad_2D(outname, hist, style='lego', logzFlag=False, ROOTout=None,
 
 def make_pad_1D(outname, data, bkgs=[], signals=[], title='', subtitle='',
             totalBkg=None, logyFlag=False, ROOTout=None, savePDF=False, savePNG=False,
-            dataOff=False, datastyle='pe X0', year=1, addSignals=True, extraText='Preliminary'):
+            dataOff=False, preVsPost=False, datastyle='pe X0', year=1, addSignals=True, extraText='Preliminary'):
     '''Make a pad holding a 1D plot with standardized formatting conventions.
 
     Args:
@@ -534,6 +613,7 @@ def make_pad_1D(outname, data, bkgs=[], signals=[], title='', subtitle='',
         savePDF (bool, optional): Save to PDF. Defaults to True.
         savePNG (bool, optional): Save to PNG. Defaults to True.
         dataOff (bool, optional): Turn off the data from plotting. Defaults to False.
+	preVsPost (bool, optional): Incoming data histogram is postfit distribution of non-data process. If True, renames legend entry. See plot_pre_vs_post().
         datastyle (str, optional): ROOT drawing style for the data. Defaults to 'pe X0'.
         year (int, optional): Luminosity formatting. Options are 16, 17, 18, 1 (full Run 2), 2 (16+17+18). Defaults to 1.
         addSignals (bool, optional): If True, multiple signals will be added together and plotted as one. If False, signals are plotted individually. Defaults to True.
@@ -561,7 +641,7 @@ def make_pad_1D(outname, data, bkgs=[], signals=[], title='', subtitle='',
         data.SetMarkerColorAlpha(ROOT.kBlack,0 if dataOff else 1)
         data.SetMarkerStyle(8)
     if 'hist' in datastyle.lower():
-        data.SetFillColorAlpha(0,0)
+	data.SetFillColorAlpha(0,0)
 
     data.SetTitleOffset(1.15,"xy")
     data.GetYaxis().SetTitleOffset(1.04)
@@ -609,7 +689,10 @@ def make_pad_1D(outname, data, bkgs=[], signals=[], title='', subtitle='',
         legend = ROOT.TLegend(0.65,legend_bottomY,0.90,0.88)
         legend.SetBorderSize(0)
         if not dataOff:
-            legend.AddEntry(data,'Data',datastyle)
+	    if preVsPost:
+		legend.AddEntry(data,'Postfit',datastyle)
+	    else:
+		legend.AddEntry(data,'Data',datastyle)
 
         totalBkg.SetMarkerStyle(0)
         totalBkg_err = totalBkg.Clone()
@@ -618,7 +701,12 @@ def make_pad_1D(outname, data, bkgs=[], signals=[], title='', subtitle='',
         totalBkg_err.SetLineWidth(0)
         totalBkg_err.SetFillColor(ROOT.kBlack)
         totalBkg_err.SetFillStyle(3354)
-        legend.AddEntry(totalBkg_err,'Total bkg unc.','F')
+	if preVsPost:
+	    # Determine whether we're plotting uncertainty on Prefit or Postfit distribution (plot_pre_vs_post() uses prefit unc)
+	    isPrefit = 1 if 'Prefit' in totalBkg.GetTitle() else 0
+	    legend.AddEntry(totalBkg_err,'Total {} unc.'.format('prefit' if isPrefit else 'postfit'), 'F')
+	else:
+	    legend.AddEntry(totalBkg_err,'Total bkg unc.','F')
 
         sigs_to_plot = signals
         # Can add together for total signal
@@ -673,13 +761,29 @@ def make_pad_1D(outname, data, bkgs=[], signals=[], title='', subtitle='',
         totalBkg_err.Draw('e2 same')
         data.Draw(datastyle+' same')
         legend.Draw()
-        
+
+	'''        
         CMS_lumi.extraText = extraText
         CMS_lumi.cmsTextSize = 0.9
         CMS_lumi.cmsTextOffset = 2
         CMS_lumi.lumiTextSize = 0.9
         CMS_lumi.CMS_lumi(main_pad, year, 11)
-        
+	'''        
+
+        texCMS = ROOT.TLatex(0.17,0.92,"CMS");#if there is 10^x
+        texCMS.SetNDC();
+        texCMS.SetTextFont(61);
+        texCMS.SetTextSize(0.0675);
+        texCMS.SetLineWidth(2);
+
+        texInternal = ROOT.TLatex(0.25,0.92,"Internal");
+        texInternal.SetNDC();
+        texInternal.SetTextFont(52);
+        texInternal.SetTextSize(0.0485);
+        texInternal.SetLineWidth(2);
+
+        ROOT.gPad.RedrawAxis()
+
         subtitle_tex = ROOT.TLatex()
         subtitle_tex.SetNDC()
         subtitle_tex.SetTextAngle(0)
@@ -687,10 +791,14 @@ def make_pad_1D(outname, data, bkgs=[], signals=[], title='', subtitle='',
         subtitle_tex.SetTextFont(42)
         subtitle_tex.SetTextAlign(12) 
         subtitle_tex.SetTextSize(0.06)
-        subtitle_tex.DrawLatex(0.208,0.74,subtitle)
+        #subtitle_tex.DrawLatex(0.208,0.74,subtitle)
+	subtitle_tex.DrawLatex(0.208, 0.83, subtitle)
+
+        texCMS.Draw()
+        texInternal.Draw()
 
         sub_pad.cd()
-        pull = _make_pull_plot(data,totalBkg)
+        pull = _make_pull_plot(data, totalBkg, preVsPost) # If plotting pre vs postfit dists, ensure the Y axis of pull plot reflects this
         pull.Draw('hist')
         pad.cd()
     
@@ -729,8 +837,7 @@ def make_can(outname, padnames, padx=0, pady=0):
         elif len(padnames) <= 9:
             padx = 3; pady = 3
         else:
-            raise RuntimeError('histlist of size %s not currently supported: %s'%(len(padnames),[p.GetName() for p in padnames]))
-
+            raise RuntimeError('histlist of size %s not currently supported: \n\n%s\n\nIf you have simultaneously fitted more than 3 regions, consider using the `regionsToGroup` option in `plot_projections()`\n'%(len(padnames),[p for p in padnames]))
     pads = [Image.open(os.path.abspath(pname)) for pname in padnames]
     w, h = pads[0].size
     grid = Image.new('RGB', size=(padx*w, pady*h))
@@ -746,11 +853,22 @@ def _get_start_stop(i,slice_idxs):
     stop  = slice_idxs[i+1]
     return start, stop
 
-def gen_projections(ledger, twoD, fittag, prefit=False):
-    plotter = Plotter(ledger, twoD, fittag)
-    plotter.plot_2D_distributions()
-    plotter.plot_projections(prefit)
-    plotter.plot_pre_vs_post()
+def gen_projections(ledger, twoD, fittag, loadExisting=False, prefit=False, regionsToGroup=[]):
+    '''
+    Optional Args:
+	loadExisting (bool): Flag to load existing projections instead of remaking everything. Defaults to False.
+	prefit	     (bool): Flag to plot prefit distributions instead of postfit. Defaults to False.
+        regionsToGroup : [[str]]
+            List of list of strings representing the desired regions to group. For example, if the
+            fit involves 5 regions: CR_fail, CR_pass, SR_fail, SR_loose, SR_pass then 2DAlphabet
+            will try to plot all (5 regions) x (3 slices) = 15 plots on the same canvas. Instead,
+            pass regionsToGroup = [['CR'],['SR']] to have the CR plotted on a 2x3 canvas and the
+            SR plotted on a 3x3 canvas.
+    '''
+    plotter = Plotter(ledger, twoD, fittag, loadExisting)
+    plotter.plot_2D_distributions(regionsToGroup=regionsToGroup)
+    plotter.plot_projections(prefit=prefit, regionsToGroup=regionsToGroup)
+    #plotter.plot_pre_vs_post(regionsToGroup=regionsToGroup)
     # plotter.plot_transfer_funcs()
 
 def make_systematic_plots(twoD):
@@ -770,12 +888,14 @@ def make_systematic_plots(twoD):
         for axis in ['X','Y']:
             nominal = getattr(nominal_full,'Projection'+axis)('%s_%s_%s_%s'%(p,r,'nom','proj'+axis))
             for s in twoD.ledger.GetShapeSystematics(drop_norms=True):
-                try:
-                    up = getattr(twoD.organizedHists.Get(process=p,region=r,systematic=s+'Up'),'Projection'+axis)('%s_%s_%s_%s'%(p,r,s+'Up','proj'+axis))
-                    down = getattr(twoD.organizedHists.Get(process=p,region=r,systematic=s+'Down'),'Projection'+axis)('%s_%s_%s_%s'%(p,r,s+'Down','proj'+axis))
-                except:
-                    print("Skipping systematic {0} for process {1} (region {2})".format(s,p,r))
-                    continue
+		# First determine whether the given process has the systematic in question (for instance, top pT reweighting is applied to ttbar, not V+jets)
+		pr_df = twoD.df.loc[(twoD.df['process']==p) & (twoD.df['region']==r)]
+		if s not in list(pr_df['variation_alias']):
+		    # If the given systematic is not applied to this process, move to next item in for loop
+		    continue
+                up = getattr(twoD.organizedHists.Get(process=p,region=r,systematic=s+'Up'),'Projection'+axis)('%s_%s_%s_%s'%(p,r,s+'Up','proj'+axis))
+                down = getattr(twoD.organizedHists.Get(process=p,region=r,systematic=s+'Down'),'Projection'+axis)('%s_%s_%s_%s'%(p,r,s+'Down','proj'+axis))
+
                 c.cd()
                 nominal.SetLineColor(ROOT.kBlack)
                 nominal.SetFillColor(ROOT.kYellow-9)
@@ -795,15 +915,22 @@ def make_systematic_plots(twoD):
                 nominal.SetTitle('')
                 nominal.GetXaxis().SetTitleOffset(1.0)
                 nominal.GetXaxis().SetTitleSize(0.05)
-                c.SetRightMargin(0.16)
+		nominal.SetStats(0)
 
                 nominal.Draw('hist')
                 up.Draw('same hist')
                 down.Draw('same hist')
 
+		legend = ROOT.TLegend(0.75,0.78,0.9,0.88)
+		legend.SetBorderSize(0)
+		legend.AddEntry(nominal,'Nom','l')
+		legend.AddEntry(up,'Up','l')
+		legend.AddEntry(down,'Down','l')
+		legend.Draw() 
+
                 c.Print(twoD.tag+'/UncertPlots/Uncertainty_%s_%s_%s_%s.png'%(p,r,s,'proj'+axis),'png')
 
-def _make_pull_plot(data, bkg):
+def _make_pull_plot(data, bkg, preVsPost=False):
     pull = data.Clone(data.GetName()+"_pull")
     pull.Add(bkg,-1)
     
@@ -811,34 +938,23 @@ def _make_pull_plot(data, bkg):
     for ibin in range(1,pull.GetNbinsX()+1):
         d = data.GetBinContent(ibin)
         b = bkg.GetBinContent(ibin)
-	#DEBUG
-	print('b: {}'.format(b))
-	print('d: {}'.format(d))
-	print('type(d) = {}'.format(type(d)))
         if d >= b:
             derr = data.GetBinErrorLow(ibin)
             berr = bkg.GetBinErrorUp(ibin)
         elif d < b:
             derr = data.GetBinErrorUp(ibin)
             berr = bkg.GetBinErrorLow(ibin)
-        
         if d == 0:
             derr = 1
 
-	# DEBUG
-	if math.isnan(d):
-	    derr = 1	
-	    berr = 1
-
         sigma = math.sqrt(derr*derr + berr*berr)
-
         if sigma != 0:
             pull.SetBinContent(ibin, (pull.GetBinContent(ibin))/sigma)
         else:
             pull.SetBinContent(ibin, 0.0 )
 
     pull.SetFillColor(ROOT.kBlue)
-    pull.SetTitle(";"+data.GetXaxis().GetTitle()+";(Data-Bkg)/#sigma")
+    pull.SetTitle(";"+data.GetXaxis().GetTitle()+";({})/#sigma".format('Post-Pre' if preVsPost else 'Data-Bkg'))
     pull.SetStats(0)
 
     pull.GetYaxis().SetRangeUser(-2.9,2.9)
@@ -849,7 +965,7 @@ def _make_pull_plot(data, bkg):
 
     pull.GetXaxis().SetLabelSize(0.13)
     pull.GetXaxis().SetTitleSize(0.15)
-    pull.GetYaxis().SetTitle("(Data-Bkg)/#sigma")
+    pull.GetYaxis().SetTitle("({})/#sigma".format('Post-Pre' if preVsPost else 'Data-Bkg'))
     return pull
 
 def _get_good_fit_results(tfile):
@@ -991,7 +1107,7 @@ def plot_gof(tag, subtag, seed=123456, condor=False):
         # Now to analyze the output
         # Get observation
         ROOT.gROOT.SetBatch(True)
-        ROOT.gStyle.SetOptStat(False)
+        ROOT.gStyle.SetOptStat(True)
         gof_data_file = ROOT.TFile.Open('higgsCombine_gof_data.GoodnessOfFit.mH120.root')
         gof_limit_tree = gof_data_file.Get('limit')
         gof_limit_tree.GetEntry(0)
@@ -1006,6 +1122,7 @@ def plot_gof(tag, subtag, seed=123456, condor=False):
         # Fit toys and derive p-value
         gaus = htoy_gof.GetFunction("gaus")
         pvalue = 1-(1/gaus.Integral(-float("inf"),float("inf")))*gaus.Integral(-float("inf"),gof_data)
+	print('P-VALUE original: {}'.format(pvalue))
 
         # Write out for reference
         with open('gof_results.txt','w') as out:
@@ -1020,11 +1137,12 @@ def plot_gof(tag, subtag, seed=123456, condor=False):
             binwidth = htoy_gof.GetXaxis().GetBinWidth(1)
             xmin = htoy_gof.GetXaxis().GetXmin()
             new_xmax = int(gof_data*1.1)
-            new_nbins = int((new_xmax-xmin)/binwidth)
+            new_nbins = int((new_xmax-xmin)/(2*binwidth))
             toy_limit_tree.Draw('limit>>hlimitrebin('+str(new_nbins)+', '+str(xmin)+', '+str(new_xmax)+')','limit>0.001 && limit<1500') 
             htoy_gof = ROOT.gDirectory.Get('hlimitrebin')
             htoy_gof.Fit("gaus")
             gaus = htoy_gof.GetFunction("gaus")
+	    pvalue = 1-(1/gaus.Integral(-float("inf"),float("inf")))*gaus.Integral(-float("inf"),gof_data)
 
         # Arrow for observed
         arrow = ROOT.TArrow(gof_data,0.25*htoy_gof.GetMaximum(),gof_data,0)
@@ -1039,9 +1157,11 @@ def plot_gof(tag, subtag, seed=123456, condor=False):
         leg.AddEntry(htoy_gof,"toy data","lep")
         leg.AddEntry(arrow,"observed = %.1f"%gof_data,"l")
         leg.AddEntry(0,"p-value = %.2f"%(pvalue),"")
+	print('PVALUE 2: {}'.format(pvalue))
 
         # Draw
         cout = ROOT.TCanvas('cout','cout',800,700)
+	htoy_gof.SetStats(1)
         htoy_gof.SetTitle('')
         htoy_gof.Draw('pez')
         arrow.Draw()
