@@ -459,24 +459,30 @@ class TwoDAlphabet:
 	template_file = ROOT.TFile.Open(self.df.iloc[0].source_filename)
 	template = template_file.Get(self.df.iloc[0].source_histname)
 	template.SetDirectory(0)
+	print(template.GetTitle())
 	numX, numY = template.GetNbinsX(), template.GetNbinsY()
 	xMin, yMin = template.GetXaxis().GetXmin(), template.GetYaxis().GetXmin()
 	xMax, yMax = template.GetXaxis().GetXmax(), template.GetYaxis().GetXmax()
+	print(numX,numY)
+	print(xMin,yMin)
+	print(xMax,yMax)
 
-	# Now get the original config to modify it 
+	# Now get the original config to modify it
 	config = Config(jsonPath='{}/runConfig.json'.format(self.tag))
 	if binName not in config.config['BINNING']:
 	    raise RuntimeError('Binning label "{}" not in list of labels in JSON: {}'.format(binName,config.config['BINNING'].keys()))
 	binning = config.config['BINNING'][binName].copy()  # {X:info, Y:info}
+	print(binning)
 	for axis in ['X','Y']:
 	    # Remove custom bin widths, if used
 	    if 'BINS' in binning[axis]:
 		binning[axis].pop('BINS')
 	    # Add in the new info
 	    binning[axis]["NBINS"] = numX if axis == 'X' else numY
-	    binning[axis]["MIN"] = xMin if axis == 'X' else xMin
-	    binning[axis]["MAX"] = xMax if axis == 'X' else xMax
+	    binning[axis]["MIN"] = xMin if axis == 'X' else yMin
+	    binning[axis]["MAX"] = xMax if axis == 'X' else yMax
 
+	print(binning)
         rpfFile = ROOT.TFile.Open('{}/RPF_data.root'.format(self.tag),'RECREATE')
         rpfFile.cd()
 
