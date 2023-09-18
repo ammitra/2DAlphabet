@@ -141,6 +141,7 @@ class PseudoData:
 	    for i in range(len(bkg_sources)):
                 bkg_file = ROOT.TFile.Open(bkg_sources.iloc[i].source_filename)
                 bkg_hist = bkg_file.Get(bkg_sources.iloc[i].source_histname)
+		bkg_hist.SetDirectory(0)
 		template.Add(bkg_hist)
 		bkg_file.Close()
 		out[region] = bkg_hist
