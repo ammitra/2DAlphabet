@@ -144,6 +144,7 @@ class PseudoData:
                 bkg_hist = bkg_file.Get(bkg_sources.iloc[i].source_histname)
 		print('Adding background {} to total bkg in {}'.format(bkg_sources.iloc[i].process, region))
 		total_bkg.Add(bkg_hist)
+		bkg_hist.SetDirectory(0)
 		bkg_file.Close()
 	total_bkg.SetDirectory(0)
 	return total_bkg
