@@ -459,20 +459,15 @@ class TwoDAlphabet:
 	template_file = ROOT.TFile.Open(self.df.iloc[0].source_filename)
 	template = template_file.Get(self.df.iloc[0].source_histname)
 	template.SetDirectory(0)
-	print(template.GetTitle())
 	numX, numY = template.GetNbinsX(), template.GetNbinsY()
 	xMin, yMin = template.GetXaxis().GetXmin(), template.GetYaxis().GetXmin()
 	xMax, yMax = template.GetXaxis().GetXmax(), template.GetYaxis().GetXmax()
-	print(numX,numY)
-	print(xMin,yMin)
-	print(xMax,yMax)
 
 	# Now get the original config to modify it
 	config = Config(jsonPath='{}/runConfig.json'.format(self.tag))
 	if binName not in config.config['BINNING']:
 	    raise RuntimeError('Binning label "{}" not in list of labels in JSON: {}'.format(binName,config.config['BINNING'].keys()))
 	binning = config.config['BINNING'][binName].copy()  # {X:info, Y:info}
-	print(binning)
 	for axis in ['X','Y']:
 	    # Remove custom bin widths, if used
 	    if 'BINS' in binning[axis]:
@@ -482,7 +477,6 @@ class TwoDAlphabet:
 	    binning[axis]["MIN"] = xMin if axis == 'X' else yMin
 	    binning[axis]["MAX"] = xMax if axis == 'X' else yMax
 
-	print(binning)
         rpfFile = ROOT.TFile.Open('{}/RPF_data.root'.format(self.tag),'RECREATE')
         rpfFile.cd()
 
@@ -542,42 +536,75 @@ class TwoDAlphabet:
 		This might be desired if the "fail" region is not completely signal-free for some reason but
 		toys still need to be generated.
 	'''
-	# Instantiate object to automate the toy data generation
+	# Instantiate object to automate the toy generation procedure
 	pseudo = PseudoData(self, regions, rpfs, findreplace)
-	# Get the data-minus-bkg template in the fail region
-	fail_template, fail_data = pseudo.GetFailTemplate()
-	# Get the total MC bkg templates in the non-fail regions
-	bkg_templates = pseudo.GetBkgTemplates()
-	# For each non-fail region, generate the Asimov dataset (totalMC + estimates from transfer functions)
-	asimov_data, transfer_estimates = pseudo.GetAsimov(fail_template, bkg_templates)
-	# Create background PDFs for each non-fail region, along with the number of events used to normalize PDFs
-	PDFs = pseudo.CreatePDF(asimov_data)
-	# Create cumulative of each PDF
-	CDFs = pseudo.CreateCDF(PDFs)
-        # If the "fail" region needs to be blinded, create pseudo data for it by treating the real data there as Asimov
-        if blindFail:
-            fail_copy = fail_data.Clone()
-            inFail = {regions[0]:fail_copy}
-            failPDF = pseudo.CreatePDF(inFail)
-            failCDF = pseudo.CreateCDF(failPDF)
-	    # Add it to the appropriate dicts so that toy data is generated for the "fail" region 
-	    PDFs.update(failPDF)
-	    CDFs.update(failCDF)
-
+	# Create some storage for objects
+	data = {} # Actual data
+	bkgs = {} # summed MC bkgs
+	dataMinusBkgs = {} # data-minus-nominalMC (for fail, this is the data-driven prediction)
+	dataDriven = {} # will be overwritten with the non-fail transfer function estimates
+	# Get all of the basic quantities
+	for region in regions:
+	    # Get the data in all regions 
+	    dataR = pseudo.GetData(region)
+	    dataR.SetDirectory(0)
+	    data[region] = dataR
+	    # Get the total bkgs in all regions
+	    bkg = pseudo.GetBackgrounds(region)
+	    bkg.SetDirectory(0)
+	    bkgs[region] = bkg
+	    # Get the total data-minus-nominalMC in each region
+	    dataMinusBkg = pseudo.GetDataMinusBackgrounds(region, dataR, bkg)
+	    dataMinusBkg.SetDirectory(0)
+	    dataMinusBkgs[region] = dataMinusBkg
+	# Get the data-driven predictions in the non-fail region using transfer functions
+	dataDriven = pseudo.GetDataDrivenPrediction(dataMinusBkgs[regions[0]]) # pass it the data-bkg fail histo
+	# Add the data-driven prediction in fail (data-minus-nominalMC) just for completeness
+	dataDriven[regions[0]] = dataMinusBkgs[regions[0]].Clone()
+	# Now we generate the toys for each region
+	asimovs = {}
+	PDFs = {}
+	CDFs = {}
+	toys = {}
+	for region in regions:
+	    print(region)
+	    # Get the asimov data (for fail this will just equal the data, but whatever)
+	    asimov = pseudo.GetAsimov(region, bkgs[region], dataDriven[region])
+	    asimov.SetDirectory(0)
+	    asimovs[region] = asimov
+	    # Make the PDF representing the bkg distribution for this region
+	    PDF = pseudo.GetPDF(region, asimov)
+	    PDF.SetDirectory(0)
+	    PDFs[region] = PDF
+	    # Make the CDF for this region from which we sample to produce the toy
+	    CDF = pseudo.GetCDF(region, PDF)
+	    CDF.SetDirectory(0)
+	    CDFs[region] = CDF
+	    # Make the pseudo data for this region
+	    if (region==regions[0]):
+		# determine whether or not to generate toy in fail as well ("blinding" fail, effectively)
+		if (blindFail):
+		    print('Blinding data in {}'.format(region))
+		    toy = pseudo.GeneratePseudoData(region, PDF, CDF, pseudo.nEvents[region], pseudo.outHistNames[region])
+		else:
+		    print('Not blinding data in {}'.format(region)) # just use the real data
+		    toy = data[region].Clone(pseudo.outHistNames[region])
+	    else:
+		toy = pseudo.GeneratePseudoData(region, PDF, CDF, pseudo.nEvents[region], pseudo.outHistNames[region])
+	    toy.SetDirectory(0)
+	    toys[region] = toy
+	# Now save it all out to a file for use and debugging
 	outFile = ROOT.TFile.Open('PseudoDataToy.root','RECREATE')
 	outFile.cd()
-	# If we aren't blinding the "fail" region, we can directly write the real data in "fail" to the output file.
-	if not blindFail: fail_data.Write()
-	# Now loop over the non-fail regions and obtain the toy generated for each
-	for region, CDF in CDFs.items():
-	    outHistName = pseudo.outHistNames[region] # automatically picks up fail histo name, if needed
-	    PDF = PDFs[region][0]
-	    nEvents = PDFs[region][1]
-	    CDF.Write()
-	    PDF.Write()
-	    toy = pseudo.GeneratePseudoData(PDF, nEvents, CDF, outHistName)
-	    toy.SetDirectory(0)
-	    toy.Write()
+	for region in regions:
+	    data[region].Write()
+	    bkgs[region].Write()
+	    dataMinusBkgs[region].Write()
+	    dataDriven[region].Write()
+	    asimovs[region].Write()
+	    PDFs[region].Write()
+	    CDFs[region].Write()
+	    toys[region].Write()
 	outFile.Close()
 
     def GoodnessOfFit(self, subtag, ntoys, card_or_w='card.txt', freezeSignal=False, seed=123456,

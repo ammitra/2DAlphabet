@@ -51,6 +51,14 @@ class PseudoData:
 	# Get the output histogram names for the toy data in each region
 	self.outHistNames = self._getOutputHistNames(self.df)
 	self.nEvents = self._getNevents(self.df)
+	# Create an empty template for filling purposes
+	temp_file = ROOT.TFile.Open(self.df.iloc[0].source_filename)
+        temp_hist = temp_file.Get(self.df.iloc[0].source_histname)
+	template_hist = temp_hist.Clone('template_hist')
+	template_hist.Reset()
+	self.template_hist = template_hist
+	self.template_hist.SetDirectory(0)
+	temp_file.Close()
 
     def _select_nominal(self, row, args):
         '''Helper function to get only the Data and nominal background files+histos in the given fit regions'''
@@ -103,134 +111,140 @@ class PseudoData:
 	    dataFile.Close()
 	return nEvents
 
-    def GetFailTemplate(self):
-	'''Subtract all MC background histograms from the data fail histogram and return the data-minus-bkg estimate.'''
-	data_file = ROOT.TFile.Open(self.df.iloc[0].source_filename)
-	data_hist = data_file.Get(self.df.iloc[0].source_histname)
-	if (self.regions[0] not in data_hist.GetName()):
-	    raise RuntimeError('Fail region {} not in data histogram name {}'.format(self.regions[0], data_hist.GetName()))
-	bkg_est = data_hist.Clone('fail_template_bkg_est')
-	fail_data = data_hist.Clone() # output the real fail data for future use
-	fail_data.SetDirectory(0)
-	bkg_est.SetDirectory(0)
-	data_file.Close()
-	print('Determining data minus background estimate in {}'.format(self.regions[0]))
-	for region, group in self.df.groupby('region'):
-	    if region != self.regions[0]: continue
+    def GetData(self, region):
+	'''Get the data histogram for a given region
+	Returns:
+	    region_data (TH2): actual data distribution in given region
+	'''
+	region_data = None
+	for r, group in self.df.groupby('region'):
+	    if r != region: continue
+	    print('Obtaining data in {}'.format(region))
+	    data_source = group.loc[group.process_type.eq('DATA')]
+	    data_file = ROOT.TFile.Open(data_source.iloc[0].source_filename)
+	    data_hist = data_file.Get(data_source.iloc[0].source_histname)
+	    region_data = data_hist.Clone('ACTUAL_DATA_{}'.format(region))
+	region_data.SetDirectory(0) # will act as an exception if something broken
+	return region_data
+
+    def GetBackgrounds(self, region):
+	'''Get a histogram of all nominal backgrounds summed for a given region
+	Returns:
+	    total_bkg (TH2): total background distribution in a given region
+	'''
+	print('Obtaining total background in {}'.format(region))
+	# Make a blank template to store the total bkg for the given region
+	total_bkg = self.template_hist.Clone('TotalMCbkg_{}'.format(region))
+	# Obtain all the background files for the given region
+	for r, group in self.df.groupby('region'):
+	    if r != region: continue
 	    bkg_sources = group.loc[group.process_type.eq('BKG')]
 	    for i in range(len(bkg_sources)):
 		bkg_file = ROOT.TFile.Open(bkg_sources.iloc[i].source_filename)
-		bkg_hist = bkg_file.Get(bkg_sources.iloc[i].source_histname)
-		print('Subtracting background {} from data in {}'.format(bkg_sources.iloc[i].process, region))
-		bkg_est.Add(bkg_hist, -1)
-		bkg_file.Close()
-	return bkg_est, fail_data
-
-    def GetBkgTemplates(self):
-	'''Gets the summed backgrounds in each of the regions'''
-	out = {}
-        template_file = ROOT.TFile.Open(self.df.iloc[0].source_filename)
-        template_hist = template_file.Get(self.df.iloc[0].source_histname)
-	template_hist.SetDirectory(0)
-	template_file.Close()
-	for region in self.regions[1:]: # skip the fail region
-	    print('Determining total MC background in {}'.format(region))
-	    template = template_hist.Clone('TotalBkg_{}'.format(region))
-	    template.Reset()
-	    bkg_sources = self.df.loc[self.df.region.eq(region) & self.df.process_type.eq('BKG')]
-	    for i in range(len(bkg_sources)):
-                bkg_file = ROOT.TFile.Open(bkg_sources.iloc[i].source_filename)
                 bkg_hist = bkg_file.Get(bkg_sources.iloc[i].source_histname)
-		template.Add(bkg_hist)
+		print('Adding background {} to total bkg in {}'.format(bkg_sources.iloc[i].process, region))
+		total_bkg.Add(bkg_hist)
 		bkg_file.Close()
-		out[region] = bkg_hist
-	return out
+	total_bkg.SetDirectory(0)
+	return total_bkg
 
-    def GetAsimov(self, fail_template, bkg_templates):
-	'''Constructs the data-driven background estimate in the non-fail regions from the
-	product of the data-driven fail template and the transfer functions.
-
+    def GetDataMinusBackgrounds(self, region, data, nominalMC):
+	'''Get the histogram of the data minus nominalMC backgrounds for a given region
 	Args:
-	    fail_template (TH2): TH2 representing the data-bkg fail region estimate
-	    bkg_templates (dict(TH2)): dictionary containing the key-value region name and 
-		associated total MC background TH2
-
+	    region (str): region to obtain data-nominalMC bkg for
+	    data (TH2): data in the given region
+	    nominalMC (TH2): nominal MC backgrounds in the given region
 	Returns:
-	    asimov (dict): key-value region name and associated total background (Asimov dataset)
-	    transfers (dict): key-value region name and associated transfer function-based estimate
+	    dataMinusBkg (TH2): data minus nominalMC background for a given region
+	'''
+	dataMinusBkg = self.template_hist.Clone('DataMinusMCBkg_{}'.format(region))
+	dataMinusBkg.Add(data)
+	dataMinusBkg.Add(nominalMC, -1.)
+	return dataMinusBkg
+
+    def GetDataDrivenPrediction(self, dataMinusBkgFail):
+	'''Get the data-driven prediction for the non-fail regions using the transfer functions
+	and the data-minus-nominalMC distribution in the fail.
+	Args:
+	    dataMinusBkgFail (TH2): The data-minus-nominalMC distribution in the fail, used to 
+		begin the chain of transfer functions
+	Returns:
+	    dataDriven (dict(TH2)): key-value dict containing the region name and the data-driven
+		prediction in that region
 	'''
 	# Find out how many transfers need to be performed
 	nTransfers = len(self.regions)-1
-	if nTransfers<1:
+	if nTransfers < 1:
 	    raise RuntimeError('There must be at least one transfer') # this should already be caught by now, but just in case
-	# Get the total MC bkg distributions to which the transfer function-based estimates will be added
-	asimov = bkg_templates.copy()
-	transfers = {}
-
+	dataDriven = {}
 	for i, region in enumerate(self.regions[1:]): # skip the fail region
 	    print('Performing transfer {}:\n\t{} -> {}'.format(i+1, self.regions[i], self.regions[i+1]))
-            CurrentRegionIndex = self.regions.index(region)
-            PreviousRegionIndex = CurrentRegionIndex - 1
-	    PreviousRegionName = self.regions[PreviousRegionIndex]
-	    TransferFuncName = self.rpfs[i].GetName()
-	    outName = '{}_{}'.format(PreviousRegionName, TransferFuncName)
+	    currentRegionIdx = self.regions.index(region)
+	    previousRegionIdx = currentRegionIdx - 1
+	    previousRegionName = self.regions[previousRegionIdx]
+	    transferFuncName = self.rpfs[i].GetName()
+	    outName = '{}_times_{}_equals_{}'.format(previousRegionName, transferFuncName, self.regions[currentRegionIdx])
 	    # Get the transfer-based estimate
-	    if (i==0): # Performing the first transfer
-		transferN = self.Multiply(fail_template, self.rpfs[i], outName)
+	    if (i==0):
+		transferN = self.Multiply(dataMinusBkgFail, self.rpfs[i], outName)
 	    else:
-		CurrentRegionIndex = self.regions.index(region)
-		PreviousRegionIndex = CurrentRegionIndex - 1
-		transferN = self.Multiply(transfers[PreviousRegionName], self.rpfs[i], outName)
+		transferN = self.Multiply(dataDriven[previousRegionName], self.rpfs[i], outName)
 	    transferN.SetDirectory(0)
 	    # Store the transfer-based estimate in case there is more than one transfer
-	    transfers[region] = transferN
-	    # Add the transfer-based bkg estimate to the total MC-based bkg estimate
-	    asimov[region].Add(transferN)	
+	    dataDriven[region] = transferN
+	# Return the output dict
+	return dataDriven
 
-	return asimov, transfers
-
-    def CreatePDF(self, asimovDatasets):
-	'''Normalizes Asimov background distribution to unity to create a background PDF
-
-	Args:
-	    asimovDatasets (dict): key-value region name and associated total background distribution
-
-	Returns:
-	    PDFs (dict): key-value region name and associated total background PDF and number of events
-		in data, in that region.
+    def GetAsimov(self, region, nominalMC, dataDriven):
+	'''Get the Asimov dataset (nominalMC + data-driven prediction) for given region
+        Args:
+            region (str): name of region to create PDF for
+            nominalMC (TH2): summed nominal MC backgrounds for given region
+            dataDriven (TH2): data-driven prediction for the given region. If this is the fail region, then the
+                data-driven prediction should be given by the data-minus-nominalMC distribution in the fail.
+                Otherwise, the data-driven prediction should be given by that which was obtained through successive
+                applications of the transfer function. See GetDataDrivenPrediction()
+        Returns:
+            asimov (TH2): The asimov dataset for the given region
 	'''
-	PDFs = {}
-	for region, asimovDataset in asimovDatasets.items():
-	    PDF = asimovDatasets[region].Clone('pdf_{}'.format(region))
-	    PDF.SetDirectory(0)
-	    # The PDF must be scaled by the integral of teh *Asimov* dataset, but this is *NOT* the number of
-	    # events that should be generated, since that is not representative of the number of events in the
-	    # actual dataset, which is what we are trying to model
-	    nEventsAsimov = PDF.Integral(1, PDF.GetNbinsX()+1, 1, PDF.GetNbinsY()+1)
-	    PDF.Scale(1./nEventsAsimov)
-	    PDFs[region] = [PDF, self.nEvents[region]] # return the actual number 
-	return PDFs
+	asimov = self.template_hist.Clone('Asimov_{}'.format(region))
+	asimov.Add(nominalMC)
+	asimov.Add(dataDriven)
+	asimov.SetDirectory(0)
+	return asimov
 
-    def CreateCDF(self, PDFs):
-	'''Creates the cumulative distribution function for each region, based on the background PDF'''
-	CDFs = {}
-	for region, PDF in PDFs.items():
-	    PDF = PDF[0] # just want the PDF histogram, not nEvents
-	    nx = PDF.GetNbinsX()
-	    ny = PDF.GetNbinsY()
-	    CDF = ROOT.TH1F('CDF_{}'.format(region),"",nx*ny,0,nx*ny)
-	    CDF.SetDirectory(0)
-	    cumulativeBin = 0
-	    for i in range(1,nx+1):
-		for j in range(1,ny+1):
-		    cumulativeBin += 1
-		    PDFval = PDF.GetBinContent(i,j) + CDF.GetBinContent(cumulativeBin-1)
-		    CDF.SetBinContent(cumulativeBin, PDFval)
-	    # Check that the CDF is bounded within [0, 1)
-	    if (CDF.GetMaximum() > 1.0):
-		raise ValueError('CDF maximum ({}) > 1.0 - something has gone wrong'.format(CDF.GetMaximum()))
-	    CDFs[region] = CDF
-	return CDFs
+    def GetPDF(self, region, asimov):
+	'''Get the normalized PDF from the Asimov dataset (nominalMC + data-driven prediction) for given region.
+	Args:
+	    region (str): name of region to create PDF for
+	    asimov (TH2): asimov dataset
+	Returns:
+	    PDF (TH2): The normalized total background PDF for the given region
+	'''
+	PDF = asimov.Clone('PDF_{}'.format(region))
+	# The PDF must be scaled by the integral of teh *Asimov* dataset, but this is *NOT* the number of
+	# events that should be generated, since that is not representative of the number of events in the
+	# actual dataset, which is what we are trying to model
+	nEventsAsimov = PDF.Integral(1, PDF.GetNbinsX()+1, 1, PDF.GetNbinsY()+1)
+	PDF.Scale(1./nEventsAsimov)
+	PDF.SetDirectory(0)
+	return PDF
+
+    def GetCDF(self, region, PDF):
+	nx = PDF.GetNbinsX()
+	ny = PDF.GetNbinsY()
+	CDF = ROOT.TH1F('CDF_{}'.format(region),"",nx*ny,0,nx*ny)
+	CDF.SetDirectory(0)
+	cumulativeBin = 0
+	for i in range(1, nx+1):
+	    for j in range(1, ny+1):
+		cumulativeBin += 1
+		PDFval = PDF.GetBinContent(i,j) + CDF.GetBinContent(cumulativeBin-1)
+		CDF.SetBinContent(cumulativeBin, PDFval)
+	# Check that the CDF is bounded within [0, 1.)
+	if (CDF.GetMaximum() > 1.0):
+	    raise ValueError('CDF maximum ({}) > 1.0 - something has gone wrong'.format(CDF.GetMaximum()))
+	return CDF
 
     def _FindPDFintersection(self, rand, CDF):
 	'''Returns the global bin corresponding to the CDF intersection'''
@@ -255,12 +269,10 @@ class PseudoData:
 	localY = globalBin % NY + 1
 	return localX, localY
 
-    def GeneratePseudoData(self, PDF, nEvents, CDF, name):
-	'''Generates toy data from the CDF of a given region'''
-	toy = PDF.Clone(name)
-	toy.Reset()
+    def GeneratePseudoData(self, region, PDF, CDF, nEvents, name):
+	toy = self.template_hist.Clone(name)
 	toy.SetDirectory(0)
-	print('Generating {} events for toy data hist {}'.format(int(nEvents), name))
+	print('Generating {} events for toy data hist {}'.format(int(nEvents),name))
 	for i in range(int(nEvents)):
 	    rand = random.uniform(0,CDF.GetMaximum()) # constrain the random number to be within the max of the CDF
 	    globalBin = self._FindPDFintersection(rand, CDF)
@@ -272,7 +284,7 @@ class PseudoData:
 
     def Multiply(self, h1, h2, name=''):
 	'''Modified version of TH2::Multiply() which additionally zeroes negative bins'''
-	#print('Multiplying {} x {}'.format(h1.GetName(),h2.GetName()))
+	print('\tMultiplying ({}) x ({}) = ({})'.format(h1.GetName(),h2.GetName(),name))
 	nh1 = (h1.GetNbinsX(),h1.GetNbinsY())
 	nh2 = (h2.GetNbinsX(),h2.GetNbinsY())
 	assert(nh1==nh2)
@@ -292,5 +304,3 @@ class PseudoData:
 		finalHist.SetBinContent(i,j,h1Val*h2Val)
 	finalHist.SetDirectory(0)
 	return finalHist
-
-    
