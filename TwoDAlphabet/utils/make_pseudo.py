@@ -131,10 +131,13 @@ class PseudoData:
 	'''Get a histogram of all nominal backgrounds summed for a given region
 	Returns:
 	    total_bkg (TH2): total background distribution in a given region
+	    bkg_components (list(TH2)): list of the individual bkg components in region
 	'''
 	print('Obtaining total background in {}'.format(region))
 	# Make a blank template to store the total bkg for the given region
 	total_bkg = self.template_hist.Clone('TotalMCbkg_{}'.format(region))
+	# Make list to store the individual background components in the given region
+	bkg_components = []
 	# Obtain all the background files for the given region
 	for r, group in self.df.groupby('region'):
 	    if r != region: continue
@@ -143,11 +146,14 @@ class PseudoData:
 		bkg_file = ROOT.TFile.Open(bkg_sources.iloc[i].source_filename)
                 bkg_hist = bkg_file.Get(bkg_sources.iloc[i].source_histname)
 		print('Adding background {} to total bkg in {}'.format(bkg_sources.iloc[i].process, region))
+		ind_bkg = bkg_hist.Clone(bkg_sources.iloc[i].process+'_'+region)
+		ind_bkg.SetDirectory(0)
+		bkg_components.append(ind_bkg)
 		total_bkg.Add(bkg_hist)
 		bkg_hist.SetDirectory(0)
 		bkg_file.Close()
 	total_bkg.SetDirectory(0)
-	return total_bkg
+	return total_bkg, bkg_components
 
     def GetDataMinusBackgrounds(self, region, data, nominalMC):
 	'''Get the histogram of the data minus nominalMC backgrounds for a given region
@@ -161,6 +167,12 @@ class PseudoData:
 	dataMinusBkg = self.template_hist.Clone('DataMinusMCBkg_{}'.format(region))
 	dataMinusBkg.Add(data)
 	dataMinusBkg.Add(nominalMC, -1.)
+	# zero out bins whose values after bkg subtraction are negative
+	for i in range(1,dataMinusBkg.GetNbinsX()+1):
+	    for j in range(1,dataMinusBkg.GetNbinsY()+1):
+		if dataMinusBkg.GetBinContent(i,j) < 0.0:
+		    print('After subtracting bkg, bin ({},{}) = {}. ZEROING'.format(i,j,dataMinusBkg.GetBinContent(i,j)))
+		    dataMinusBkg.SetBinContent(i,j,0.0)
 	return dataMinusBkg
 
     def GetDataDrivenPrediction(self, dataMinusBkgFail):
@@ -251,8 +263,8 @@ class PseudoData:
 	'''Returns the global bin corresponding to the CDF intersection'''
 	found = False
 	for i in range(1, CDF.GetNbinsX()+1):
-	    PDFval = CDF.GetBinContent(i)
-	    if (PDFval > rand):
+	    CDFval = CDF.GetBinContent(i)
+	    if (CDFval > rand):
 		found = True
 		return i
 	if not found:
@@ -270,10 +282,33 @@ class PseudoData:
 	localY = globalBin % NY + 1
 	return localX, localY
 
-    def GeneratePseudoData(self, region, PDF, CDF, nEvents, name):
+    def GeneratePseudoData_Poisson(self, region, asimov, name):
+	'''Generate the pseudo-data toy by sampling the non-normalized PDF. For every bin in
+	the PDF, obtain the yield. Use this yield as the mean of a Poisson distribution and 
+	sample randomly from this distribution to obtain the yield in this same bin of the toy. 
+	'''
 	toy = self.template_hist.Clone(name)
 	toy.SetDirectory(0)
-	print('Generating {} events for toy data hist {}'.format(int(nEvents),name))
+	print('Generating events for toy data hist {} [Poisson sampling method]'.format(name))
+	r = ROOT.TRandom()
+	for i in range(1,asimov.GetNbinsX()+1):
+	    for j in range(1,asimov.GetNbinsY()+1):
+		numberInData = asimov.GetBinContent(i,j)
+		print(numberInData)
+		numberInToy = r.Poisson(numberInData)
+		print(numberInToy)
+		toy.SetBinContent(i,j,numberInToy)
+	return toy
+
+    def GeneratePseudoData(self, region, PDF, CDF, nEvents, name):
+	'''Generate the pseudo-data toy by sampling the CDF. For every event in data in the
+	given region, generate a random number and loop through the CDF bins. When the value
+	in a given bin of the CDF is greater than the random number, stop and convert CDF bin
+	to global bin, and add an event at that location in the toy data.
+	'''
+	toy = self.template_hist.Clone(name)
+	toy.SetDirectory(0)
+	print('Generating {} events for toy data hist {} [CDF sampling method]'.format(int(nEvents),name))
 	for i in range(int(nEvents)):
 	    rand = random.uniform(0,CDF.GetMaximum()) # constrain the random number to be within the max of the CDF
 	    globalBin = self._FindPDFintersection(rand, CDF)

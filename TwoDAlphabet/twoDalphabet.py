@@ -518,7 +518,7 @@ class TwoDAlphabet:
 	rpfFile.Close()
 	return outHists
 
-    def MakePseudoData(self, regions=[], rpfs=[], findreplace={}, blindFail=False):
+    def MakePseudoData(self, regions=[], rpfs=[], findreplace={}, blindFail=False, poisson=True):
 	'''Produce a pseudo-data toy in all of the regions used in a fit. Useful for 
 	producing blinded signal regions.
 
@@ -535,6 +535,7 @@ class TwoDAlphabet:
 	    blindFail (bool): Whether or not to blind (by creating pseudo data) for the given "fail" region. 
 		This might be desired if the "fail" region is not completely signal-free for some reason but
 		toys still need to be generated.
+	    poisson (bool): Whether to use Poission distribution to generate toy or CDF
 	'''
 	# Instantiate object to automate the toy generation procedure
 	pseudo = PseudoData(self, regions, rpfs, findreplace)
@@ -543,16 +544,20 @@ class TwoDAlphabet:
 	bkgs = {} # summed MC bkgs
 	dataMinusBkgs = {} # data-minus-nominalMC (for fail, this is the data-driven prediction)
 	dataDriven = {} # will be overwritten with the non-fail transfer function estimates
+	indBkgs = {} # store list of individual bkg components for each region
 	# Get all of the basic quantities
 	for region in regions:
 	    # Get the data in all regions 
 	    dataR = pseudo.GetData(region)
 	    dataR.SetDirectory(0)
 	    data[region] = dataR
-	    # Get the total bkgs in all regions
-	    bkg = pseudo.GetBackgrounds(region)
+	    # Get the total bkgs as well as individual components in all regions
+	    bkg, bkg_components = pseudo.GetBackgrounds(region)
 	    bkg.SetDirectory(0)
 	    bkgs[region] = bkg
+	    for indBkg in bkg_components:
+		indBkg.SetDirectory(0)
+	    indBkgs[region] = bkg_components
 	    # Get the total data-minus-nominalMC in each region
 	    dataMinusBkg = pseudo.GetDataMinusBackgrounds(region, dataR, bkg)
 	    dataMinusBkg.SetDirectory(0)
@@ -585,12 +590,21 @@ class TwoDAlphabet:
 		# determine whether or not to generate toy in fail as well ("blinding" fail, effectively)
 		if (blindFail):
 		    print('Blinding data in {}'.format(region))
-		    toy = pseudo.GeneratePseudoData(region, PDF, CDF, pseudo.nEvents[region], pseudo.outHistNames[region])
+		    if (poisson):
+			toy = pseudo.GeneratePseudoData_Poisson(region, asimov, pseudo.outHistNames[region])
+		    else:
+		    	toy = pseudo.GeneratePseudoData(region, PDF, CDF, pseudo.nEvents[region], pseudo.outHistNames[region])
 		else:
 		    print('Not blinding data in {}'.format(region)) # just use the real data
-		    toy = data[region].Clone(pseudo.outHistNames[region])
+		    if (poisson):
+			toy = pseudo.GeneratePseudoData_Poisson(region, asimov, pseudo.outHistNames[region])
+		    else:
+		    	toy = data[region].Clone(pseudo.outHistNames[region])
 	    else:
-		toy = pseudo.GeneratePseudoData(region, PDF, CDF, pseudo.nEvents[region], pseudo.outHistNames[region])
+		if (poisson):
+		    toy = pseudo.GeneratePseudoData_Poisson(region, asimov, pseudo.outHistNames[region])
+		else:
+		    toy = pseudo.GeneratePseudoData(region, PDF, CDF, pseudo.nEvents[region], pseudo.outHistNames[region])
 	    toy.SetDirectory(0)
 	    toys[region] = toy
 	# Now save it all out to a file for use and debugging
@@ -605,6 +619,8 @@ class TwoDAlphabet:
 	    PDFs[region].Write()
 	    CDFs[region].Write()
 	    toys[region].Write()
+	    for indBkg in indBkgs[region]:
+		indBkg.Write()
 	outFile.Close()
 
     def GoodnessOfFit(self, subtag, ntoys, card_or_w='card.txt', freezeSignal=False, seed=123456,
