@@ -221,8 +221,9 @@ class Config:
                     {'color': nan if 'COLOR' not in info else info['COLOR'],
                     'process_type': info['TYPE'],
                     'scale': 1.0 if 'SCALE' not in info else info['SCALE'],
-                    'source_filename': info['LOC'].split(':')[0],
-                    'source_histname': info['LOC'].split(':')[1],
+		    # Need to check if user requests files hosted remotely via xrootd redirector
+                    'source_filename': info['LOC'].split(':')[0] if 'root://' not in info['LOC'] else info['LOC'].split(':')[0]+':'+info['LOC'].split(':')[1],
+                    'source_histname': info['LOC'].split(':')[1] if 'root://' not in info['LOC'] else info['LOC'].split(':')[2],
                     'alias': info['NAME'] if 'ALIAS' not in info.keys() else info['ALIAS'], #in file name
                     'title': info['NAME'] if 'TITLE' not in info.keys() else info['TITLE'], #in legend entry
                     'variation': info['VARIATION'],
@@ -381,6 +382,7 @@ class OrganizedHists():
             None
         '''
         for infilename,histdf in self.hist_map.items():
+	    print('opening {}'.format(infilename))
             infile = ROOT.TFile.Open(infilename)
             for row in histdf.itertuples():
                 if row.source_histname not in [k.GetName() for k in infile.GetListOfKeys()]:
@@ -517,15 +519,15 @@ def _get_syst_attrs(name,syst_dict):
             {
                 'shapes':syst_dict['SIGMA'],
                 'syst_type': 'shapes',
-                'source_filename': syst_dict['UP'].split(':')[0],
-                'source_histname': syst_dict['UP'].split(':')[1],
+                'source_filename': syst_dict['UP'].split(':')[0] if 'root://' not in syst_dict['UP'] else syst_dict['UP'].split(':')[0]+':'+syst_dict['UP'].split(':')[1],
+                'source_histname': syst_dict['UP'].split(':')[1] if 'root://' not in syst_dict['UP'] else syst_dict['UP'].split(':')[2],
                 'direction': 'Up',
                 'variation_alias': name if 'ALIAS' not in syst_dict else syst_dict['ALIAS']
             }, {
                 'shapes':syst_dict['SIGMA'],
                 'syst_type': 'shapes',
-                'source_filename': syst_dict['DOWN'].split(':')[0],
-                'source_histname': syst_dict['DOWN'].split(':')[1],
+                'source_filename': syst_dict['DOWN'].split(':')[0] if 'root://' not in syst_dict['DOWN'] else syst_dict['DOWN'].split(':')[0]+':'+syst_dict['DOWN'].split(':')[1],
+                'source_histname': syst_dict['DOWN'].split(':')[1] if 'root://' not in syst_dict['DOWN'] else syst_dict['DOWN'].split(':')[2],
                 'direction': 'Down',
                 'variation_alias': name if 'ALIAS' not in syst_dict else syst_dict['ALIAS']
             }
