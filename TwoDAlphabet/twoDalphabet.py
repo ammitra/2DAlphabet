@@ -452,9 +452,8 @@ class TwoDAlphabet:
 	subDirs = next(os.walk(self.tag))[1]
 	subtags = []
 	for subDir in subDirs:
-	    if os.path.isfile('{}/{}/postfitshapes_s.root'.format(self.tag,subDir)):
+	    if os.path.isfile('{}/{}/postfitshapes_b.root'.format(self.tag,subDir)):
 		subtags.append(subDir)
-
 	# Get the input histogram binning (X and Y min/max, nbins)
 	template_file = ROOT.TFile.Open(self.df.iloc[0].source_filename)
 	template = template_file.Get(self.df.iloc[0].source_histname)
@@ -488,7 +487,14 @@ class TwoDAlphabet:
 	    for fitType in ['b','s']:
 		subtag = [tag for tag in subtags if rpf in tag]
 		if len(subtag) != 1:
-		    raise ValueError('{} valid subtags found: {}\nNot supported.'.format(len(subtag),subtag))
+		    print('WARNING: {} valid subtags found for RPF {}'.format(len(subtag), rpf))
+		    print('\tskipping fit directory {}'.format(subtag))
+		    #raise ValueError('{} valid subtags found: {}\nNot supported.'.format(len(subtag),subtag))
+		    continue
+		if not os.path.isfile('{}/{}/postfitshapes_{}.root'.format(self.tag,subtag[0],fitType)):
+		    print('WARNING: {} fit result not found for RPF {}'.format('b-only' if fitType=='b' else 's+b',rpf))
+		    print('Skipping fit {} fit for {}/{}'.format('b-only' if fitType=='b' else 's+b',self.tag,subtag[0]))
+		    continue
 		rpf_params = self.GetParamsOnMatch(regex='_par', subtag=subtag[0], b_or_s=fitType)
 		rpf_func = ParametricFunction(
 		    rpf+fitType, newBinning, rpfOpts[rpf]['form'],
@@ -518,7 +524,7 @@ class TwoDAlphabet:
 	rpfFile.Close()
 	return outHists
 
-    def MakePseudoData(self, regions=[], rpfs=[], findreplace={}, blindFail=False, poisson=True):
+    def MakePseudoData(self, regions=[], rpfs=[], findreplace={}, blindFail=False, poisson=True, seed=12345):
 	'''Produce a pseudo-data toy in all of the regions used in a fit. Useful for 
 	producing blinded signal regions.
 
@@ -536,6 +542,7 @@ class TwoDAlphabet:
 		This might be desired if the "fail" region is not completely signal-free for some reason but
 		toys still need to be generated.
 	    poisson (bool): Whether to use Poission distribution to generate toy or CDF
+	    seed (int): Seed for TRandom generator for Poisson method. 0 = random
 	'''
 	# Instantiate object to automate the toy generation procedure
 	pseudo = PseudoData(self, regions, rpfs, findreplace)
@@ -591,24 +598,28 @@ class TwoDAlphabet:
 		if (blindFail):
 		    print('Blinding data in {}'.format(region))
 		    if (poisson):
-			toy = pseudo.GeneratePseudoData_Poisson(region, asimov, pseudo.outHistNames[region])
+			toy = pseudo.GeneratePseudoData_Poisson(region, asimov, pseudo.outHistNames[region], seed)
 		    else:
-		    	toy = pseudo.GeneratePseudoData(region, PDF, CDF, pseudo.nEvents[region], pseudo.outHistNames[region])
+		    	toy = pseudo.GeneratePseudoData(region, PDF, CDF, pseudo.nEvents[region], pseudo.outHistNames[region], seed)
 		else:
 		    print('Not blinding data in {}'.format(region)) # just use the real data
+		    print('Cloning data hist {}'.format(data[region].GetName()))
+		    toy = data[region].Clone(pseudo.outHistNames[region])
+		    '''
 		    if (poisson):
 			toy = pseudo.GeneratePseudoData_Poisson(region, asimov, pseudo.outHistNames[region])
 		    else:
 		    	toy = data[region].Clone(pseudo.outHistNames[region])
+		    '''
 	    else:
 		if (poisson):
-		    toy = pseudo.GeneratePseudoData_Poisson(region, asimov, pseudo.outHistNames[region])
+		    toy = pseudo.GeneratePseudoData_Poisson(region, asimov, pseudo.outHistNames[region], seed)
 		else:
-		    toy = pseudo.GeneratePseudoData(region, PDF, CDF, pseudo.nEvents[region], pseudo.outHistNames[region])
+		    toy = pseudo.GeneratePseudoData(region, PDF, CDF, pseudo.nEvents[region], pseudo.outHistNames[region], seed)
 	    toy.SetDirectory(0)
 	    toys[region] = toy
 	# Now save it all out to a file for use and debugging
-	outFile = ROOT.TFile.Open('PseudoDataToy.root','RECREATE')
+	outFile = ROOT.TFile.Open('PseudoDataToy_{}_method{}_{}.root'.format('Poisson' if poisson else 'CDF','_seed{}'.format(seed),'blindedFail' if blindFail else 'unblindedFail'),'RECREATE')
 	outFile.cd()
 	for region in regions:
 	    data[region].Write()

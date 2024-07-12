@@ -155,24 +155,27 @@ class PseudoData:
 	total_bkg.SetDirectory(0)
 	return total_bkg, bkg_components
 
-    def GetDataMinusBackgrounds(self, region, data, nominalMC):
+    def GetDataMinusBackgrounds(self, region, data, nominalMC, forcePositive=False):
 	'''Get the histogram of the data minus nominalMC backgrounds for a given region
 	Args:
-	    region (str): region to obtain data-nominalMC bkg for
-	    data (TH2): data in the given region
-	    nominalMC (TH2): nominal MC backgrounds in the given region
+	    region	   (str): region to obtain data-nominalMC bkg for
+	    data 	   (TH2): data in the given region
+	    nominalMC 	   (TH2): nominal MC backgrounds in the given region
+	    forcePositive (bool): whether to zero out negative bins after MC subtraction
 	Returns:
 	    dataMinusBkg (TH2): data minus nominalMC background for a given region
 	'''
 	dataMinusBkg = self.template_hist.Clone('DataMinusMCBkg_{}'.format(region))
 	dataMinusBkg.Add(data)
 	dataMinusBkg.Add(nominalMC, -1.)
-	# zero out bins whose values after bkg subtraction are negative
 	for i in range(1,dataMinusBkg.GetNbinsX()+1):
 	    for j in range(1,dataMinusBkg.GetNbinsY()+1):
 		if dataMinusBkg.GetBinContent(i,j) < 0.0:
-		    print('After subtracting bkg, bin ({},{}) = {}. ZEROING'.format(i,j,dataMinusBkg.GetBinContent(i,j)))
-		    dataMinusBkg.SetBinContent(i,j,0.0)
+		    if forcePositive:
+		    	print('After subtracting bkg, bin ({},{}) = {}. ZEROING'.format(i,j,dataMinusBkg.GetBinContent(i,j)))
+		    	dataMinusBkg.SetBinContent(i,j,0.0)
+		    else:
+			print('After subtracting bkg, bin ({},{}) = {}. NOT ZEROING'.format(i,j,dataMinusBkg.GetBinContent(i,j)))
 	return dataMinusBkg
 
     def GetDataDrivenPrediction(self, dataMinusBkgFail):
@@ -282,7 +285,7 @@ class PseudoData:
 	localY = globalBin % NY + 1
 	return localX, localY
 
-    def GeneratePseudoData_Poisson(self, region, asimov, name):
+    def GeneratePseudoData_Poisson(self, region, asimov, name, seed=12345):
 	'''Generate the pseudo-data toy by sampling the non-normalized PDF. For every bin in
 	the PDF, obtain the yield. Use this yield as the mean of a Poisson distribution and 
 	sample randomly from this distribution to obtain the yield in this same bin of the toy. 
@@ -290,17 +293,15 @@ class PseudoData:
 	toy = self.template_hist.Clone(name)
 	toy.SetDirectory(0)
 	print('Generating events for toy data hist {} [Poisson sampling method]'.format(name))
-	r = ROOT.TRandom()
+	r = ROOT.TRandom3(seed) # seed = 0 generates random
 	for i in range(1,asimov.GetNbinsX()+1):
 	    for j in range(1,asimov.GetNbinsY()+1):
 		numberInData = asimov.GetBinContent(i,j)
-		print(numberInData)
 		numberInToy = r.Poisson(numberInData)
-		print(numberInToy)
 		toy.SetBinContent(i,j,numberInToy)
 	return toy
 
-    def GeneratePseudoData(self, region, PDF, CDF, nEvents, name):
+    def GeneratePseudoData(self, region, PDF, CDF, nEvents, name, seed=12345):
 	'''Generate the pseudo-data toy by sampling the CDF. For every event in data in the
 	given region, generate a random number and loop through the CDF bins. When the value
 	in a given bin of the CDF is greater than the random number, stop and convert CDF bin
@@ -309,8 +310,9 @@ class PseudoData:
 	toy = self.template_hist.Clone(name)
 	toy.SetDirectory(0)
 	print('Generating {} events for toy data hist {} [CDF sampling method]'.format(int(nEvents),name))
+	r = ROOT.TRandom3(seed)
 	for i in range(int(nEvents)):
-	    rand = random.uniform(0,CDF.GetMaximum()) # constrain the random number to be within the max of the CDF
+	    rand = r.Uniform(CDF.GetMaximum()) # constrain the random number to be within the max of the CDF
 	    globalBin = self._FindPDFintersection(rand, CDF)
 	    nx, ny = self._GlobalBinTo2D(PDF, globalBin)
 	    nx = int(nx)
